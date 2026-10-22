@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Disallow: /admin-loginxyz
+Disallow: /admin-dashboard
+Disallow: /api/
+
+Sitemap: https://ajjewellers.in/sitemap.xml
