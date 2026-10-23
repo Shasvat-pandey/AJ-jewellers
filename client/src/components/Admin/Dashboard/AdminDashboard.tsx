@@ -109,11 +109,17 @@ export default function AdminDashboard() {
         if (ordersData.success) {
           const allOrders = ordersData.data;
           
-          // Calculate total money made (ignoring cancelled orders if you add them later)
-          calculatedRevenue = allOrders.reduce((sum: number, order: any) => sum + order.totalAmount, 0);
+          // Calculate verified revenue only: count orders verified & marked 'Paid', excluding Cancelled
+          calculatedRevenue = allOrders
+            .filter((order: any) => order.paymentStatus === 'Paid' && order.orderStatus !== 'Cancelled')
+            .reduce((sum: number, order: any) => sum + (order.totalAmount || 0), 0);
           
-          // Count exact number of "Pending" and "Processing" orders
-          pendingCount = allOrders.filter((order: any) => order.orderStatus === 'Pending' || order.orderStatus === 'Processing').length;
+          // Count exact number of orders requiring action (Pending, Processing, or Awaiting Verification)
+          pendingCount = allOrders.filter((order: any) => 
+            order.orderStatus === 'Pending' || 
+            order.orderStatus === 'Processing' || 
+            order.paymentStatus === 'Awaiting Verification'
+          ).length;
           
           // Grab the 5 most recent orders for the dashboard table
           latestOrders = allOrders.slice(0, 5);
@@ -274,7 +280,7 @@ export default function AdminDashboard() {
                   <div className="bg-[#4A0E1B]/10 p-1.5 sm:p-2 text-[#4A0E1B] rounded-full"><TrendingUp size={14} className="sm:w-4 sm:h-4" /></div>
                 </div>
                 <p className="font-cormorant text-2xl sm:text-3xl text-[#4A0E1B]">{formatINR(dashboardStats.totalRevenue)}</p>
-                <p className="text-[10px] sm:text-xs text-green-700 mt-1 sm:mt-2 font-medium">Verified by database</p>
+                <p className="text-[10px] sm:text-xs text-green-700 mt-1 sm:mt-2 font-medium">Verified paid orders</p>
               </div>
 
               {/* --- LIVE: PENDING ORDERS --- */}

@@ -5,6 +5,21 @@ export interface User {
   name: string;
   email: string;
   phone: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  pincode?: string;
+  dob?: string;
+  gender?: string;
+  avatar?: string;
+  addresses?: any[];
+  notifications?: {
+    orderUpdates?: boolean;
+    whatsappAlerts?: boolean;
+    privilegeOffers?: boolean;
+    newsletter?: boolean;
+  };
+  isVerified?: boolean;
   role: 'customer' | 'admin';
 }
 
@@ -18,6 +33,7 @@ interface AuthContextType {
   user: User | null;
   login: (email: string, password: string, portal?: 'customer' | 'admin') => Promise<{ success: boolean; error?: string }>;
   signup: (name: string, email: string, password: string, phone: string, otp: string) => Promise<{ success: boolean; error?: string }>;
+  updateUser: (updatedFields: Partial<User>) => void;
   logout: () => void;
   isLoading: boolean;
   isAuthenticated: boolean;
@@ -72,7 +88,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               credentials: 'include'
             });
             
-            if (!response.ok) {
+            if (response.ok) {
+              const resData = await response.json();
+              if (resData.success && resData.data) {
+                const updatedUser: User = {
+                  _id: resData.data._id,
+                  name: resData.data.name,
+                  email: resData.data.email,
+                  phone: resData.data.phone || '',
+                  address: resData.data.address || '',
+                  city: resData.data.city || '',
+                  state: resData.data.state || '',
+                  pincode: resData.data.pincode || '',
+                  dob: resData.data.dob || '',
+                  gender: resData.data.gender || '',
+                  avatar: resData.data.avatar || '',
+                  addresses: resData.data.addresses || [],
+                  notifications: resData.data.notifications || {
+                    orderUpdates: true,
+                    whatsappAlerts: true,
+                    privilegeOffers: true,
+                    newsletter: false
+                  },
+                  isVerified: resData.data.isVerified !== false,
+                  role: resData.data.role || 'customer'
+                };
+                setUser(updatedUser);
+                localStorage.setItem(USER_KEY, JSON.stringify(updatedUser));
+              }
+            } else {
               // Token expired or invalid
               localStorage.removeItem(TOKEN_KEY);
               localStorage.removeItem(USER_KEY);
@@ -161,21 +205,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return { success: false, error: "Access denied. Only admin accounts can log in here." };
         }
 
+        const userData: User = {
+          _id: data.data._id,
+          name: data.data.name,
+          email: data.data.email,
+          phone: data.data.phone || '',
+          address: data.data.address || '',
+          city: data.data.city || '',
+          state: data.data.state || '',
+          pincode: data.data.pincode || '',
+          dob: data.data.dob || '',
+          gender: data.data.gender || '',
+          avatar: data.data.avatar || '',
+          addresses: data.data.addresses || [],
+          notifications: data.data.notifications || {
+            orderUpdates: true,
+            whatsappAlerts: true,
+            privilegeOffers: true,
+            newsletter: false
+          },
+          isVerified: data.data.isVerified !== false,
+          role: data.data.role
+        };
+
         localStorage.setItem(TOKEN_KEY, data.data.token);
-        localStorage.setItem(USER_KEY, JSON.stringify({
-          _id: data.data._id,
-          name: data.data.name,
-          email: data.data.email,
-          phone: data.data.phone,
-          role: data.data.role
-        }));
-        setUser({
-          _id: data.data._id,
-          name: data.data.name,
-          email: data.data.email,
-          phone: data.data.phone,
-          role: data.data.role
-        });
+        localStorage.setItem(USER_KEY, JSON.stringify(userData));
+        setUser(userData);
 
         // Trigger pending action if any and close modal
         handleAuthSuccess();
@@ -207,21 +262,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const data = await response.json();
 
       if (data.success && data.data?.token) {
+        const userData: User = {
+          _id: data.data._id,
+          name: data.data.name,
+          email: data.data.email,
+          phone: data.data.phone || '',
+          address: '',
+          city: '',
+          state: '',
+          pincode: '',
+          role: data.data.role
+        };
+
         localStorage.setItem(TOKEN_KEY, data.data.token);
-        localStorage.setItem(USER_KEY, JSON.stringify({
-          _id: data.data._id,
-          name: data.data.name,
-          email: data.data.email,
-          phone: data.data.phone,
-          role: data.data.role
-        }));
-        setUser({
-          _id: data.data._id,
-          name: data.data.name,
-          email: data.data.email,
-          phone: data.data.phone,
-          role: data.data.role
-        });
+        localStorage.setItem(USER_KEY, JSON.stringify(userData));
+        setUser(userData);
 
         // Trigger pending action if any and close modal
         handleAuthSuccess();
@@ -237,6 +292,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [handleAuthSuccess]);
 
+  const updateUser = useCallback((updatedFields: Partial<User>) => {
+    setUser((prev) => {
+      if (!prev) return null;
+      const updated = { ...prev, ...updatedFields };
+      localStorage.setItem(USER_KEY, JSON.stringify(updated));
+      return updated;
+    });
+  }, []);
+
   const logout = useCallback(() => {
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(USER_KEY);
@@ -247,6 +311,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     user,
     login,
     signup,
+    updateUser,
     logout,
     isLoading,
     isAuthenticated: !!user,

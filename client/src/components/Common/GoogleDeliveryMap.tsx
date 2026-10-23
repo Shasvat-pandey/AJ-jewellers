@@ -1,29 +1,19 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { APIProvider, Map, AdvancedMarker, Pin } from "@vis.gl/react-google-maps";
-import { MapContainer, TileLayer, Marker, Popup, useMap, useMapEvents } from "react-leaflet";
+import { APIProvider, Map as GoogleMap, AdvancedMarker } from "@vis.gl/react-google-maps";
+import { MapContainer, TileLayer, Marker, useMap, useMapEvents } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import markerIcon2x from "leaflet/dist/images/marker-icon-2x.png";
-import markerIcon from "leaflet/dist/images/marker-icon.png";
-import markerShadow from "leaflet/dist/images/marker-shadow.png";
-import { 
-  MapPin, 
-  Navigation, 
-  ExternalLink, 
-  Copy, 
-  Check, 
-  Compass, 
-  Sparkles, 
-  AlertCircle,
-  Building
+import {
+  MapPin,
+  Navigation,
+  ExternalLink,
+  Copy,
+  Check,
+  Compass,
+  FileText,
+  Info,
+  Pencil
 } from "lucide-react";
-
-// Fix default Leaflet marker icons if fallback map is rendered
-L.Icon.Default.mergeOptions({
-  iconRetinaUrl: markerIcon2x,
-  iconUrl: markerIcon,
-  shadowUrl: markerShadow,
-});
 
 export interface GoogleDeliveryMapProps {
   lat: number;
@@ -31,6 +21,7 @@ export interface GoogleDeliveryMapProps {
   onChange?: (lat: number, lng: number, formattedAddress?: string) => void;
   landmark?: string;
   onLandmarkChange?: (landmark: string) => void;
+  addressDetails?: string;
   readOnly?: boolean;
   className?: string;
   height?: string;
@@ -57,15 +48,39 @@ function LeafletRecenter({ lat, lng }: { lat: number; lng: number }) {
   return null;
 }
 
+// Custom Marker for Leaflet matching the design mock (Concentric ring + Burgundy Pin + Tooltip badge)
+const customDeliveryPinIcon = L.divIcon({
+  className: "custom-delivery-pin",
+  html: `
+    <div style="position: relative; display: flex; flex-direction: column; align-items: center; transform: translate(-50%, -100%);">
+      <div style="background: white; color: #4A0E1B; font-family: 'Cormorant Garamond', Georgia, serif; font-weight: 600; font-size: 11px; padding: 3px 10px; border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.12); border: 1px solid #E5D7B7; white-space: nowrap; margin-bottom: 4px;">
+        Your Delivery Location
+      </div>
+      <div style="position: relative; width: 44px; height: 44px; display: flex; align-items: center; justify-content: center;">
+        <div style="position: absolute; width: 40px; height: 40px; border-radius: 50%; background: rgba(74, 14, 27, 0.15); border: 1px solid rgba(74, 14, 27, 0.3);"></div>
+        <div style="position: absolute; width: 22px; height: 22px; border-radius: 50%; background: rgba(74, 14, 27, 0.25);"></div>
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="#4A0E1B" stroke="#C9A24B" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="position: relative; z-index: 2; filter: drop-shadow(0 2px 5px rgba(0,0,0,0.25));">
+          <path d="M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0" />
+          <circle cx="12" cy="10" r="3" fill="#FFFDF9" stroke="#C9A24B" />
+        </svg>
+      </div>
+    </div>
+  `,
+  iconSize: [44, 76],
+  iconAnchor: [22, 76],
+  popupAnchor: [0, -76]
+});
+
 export default function GoogleDeliveryMap({
   lat,
   lng,
   onChange,
   landmark = "",
   onLandmarkChange,
+  addressDetails = "",
   readOnly = false,
   className = "",
-  height = "320px",
+  height = "380px",
   zoom = 15
 }: GoogleDeliveryMapProps) {
   const apiKey = (import.meta as any).env?.VITE_GOOGLE_MAPS_API_KEY || "";
@@ -73,14 +88,13 @@ export default function GoogleDeliveryMap({
 
   const [copied, setCopied] = useState(false);
   const [isLocating, setIsLocating] = useState(false);
-  const [gpsAccuracy, setGpsAccuracy] = useState<number | null>(null);
-  const [locationStatus, setLocationStatus] = useState<string>("");
+  const [mapType, setMapType] = useState<"standard" | "satellite">("standard");
+  const mapContainerRef = useRef<HTMLDivElement>(null);
 
-  const directMapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
   const directMapsSearchUrl = `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
 
   const handleCopyCoordinates = () => {
-    const text = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+    const text = `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
     navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
@@ -89,30 +103,26 @@ export default function GoogleDeliveryMap({
   // 1-Click High-Accuracy GPS Geolocation
   const handleLocateMe = useCallback(() => {
     if (!navigator.geolocation) {
-      setLocationStatus("Geolocation is not supported by your browser.");
+      alert("Geolocation is not supported by your browser.");
       return;
     }
 
     setIsLocating(true);
-    setLocationStatus("Triangulating GPS doorstep coordinates...");
 
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         const userLat = pos.coords.latitude;
         const userLng = pos.coords.longitude;
-        const accuracy = Math.round(pos.coords.accuracy);
-        setGpsAccuracy(accuracy);
-        setLocationStatus(`GPS Locked (Accuracy: ±${accuracy}m). Drag pin to fine-tune exact gate.`);
         setIsLocating(false);
 
         if (onChange) {
-          onChange(userLat, userLng, `GPS Pinpoint (±${accuracy}m)`);
+          onChange(userLat, userLng);
         }
       },
       (err) => {
         console.warn("Geolocation error:", err.message);
         setIsLocating(false);
-        setLocationStatus("Could not fetch GPS. Please tap or drag the pin on the map.");
+        alert("Could not fetch GPS. Please tap or drag the pin on the map.");
       },
       {
         enableHighAccuracy: true,
@@ -122,83 +132,157 @@ export default function GoogleDeliveryMap({
     );
   }, [onChange]);
 
+  const handleEditLocation = () => {
+    if (mapContainerRef.current) {
+      mapContainerRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  };
+
   return (
-    <div className={`space-y-3 font-jost ${className}`}>
-      {/* MAP HEADER / ACTION BAR */}
-      <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-        <div className="flex items-center gap-2 text-[#4A0E1B]">
-          <span className="w-2.5 h-2.5 rounded-full bg-[#C9A24B] animate-pulse shrink-0" />
-          <span className="font-semibold uppercase tracking-wider text-[11px]">
-            {readOnly ? "Verified Delivery Coordinates" : "Pinpoint Exact Doorstep Location"}
+    <div className={`space-y-4 font-jost ${className}`}>
+      {/* 1. CONTROLS BAR: PINPOINT EXACT DOORSTEP LOCATION */}
+      <div>
+        <div className="flex items-center gap-2 mb-3">
+          <span className="w-2.5 h-2.5 rounded-full bg-[#C9A24B] shrink-0" />
+          <span className="font-jost text-[11px] font-semibold uppercase tracking-[0.15em] text-[#4A0E1B]">
+            PINPOINT EXACT DOORSTEP LOCATION
           </span>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2.5 sm:gap-3">
+          {/* Action 1: Use My Current Location */}
           {!readOnly && (
             <button
               type="button"
               onClick={handleLocateMe}
               disabled={isLocating}
-              className="bg-[#FDFBF4] border border-[#C9A24B] text-[#4A0E1B] hover:bg-[#C9A24B] hover:text-[#2A0A10] px-3 py-1.5 rounded-sm transition-all flex items-center gap-1.5 cursor-pointer text-xs font-medium shadow-xs disabled:opacity-50"
-              title="Use your phone/laptop GPS to position the delivery pin"
+              className="bg-white border border-[#C9A24B]/60 hover:bg-[#FDFBF4] text-[#4A0E1B] px-4 py-2.5 rounded-lg text-xs font-jost font-medium flex items-center gap-2 shadow-xs transition-colors cursor-pointer disabled:opacity-50"
             >
-              <Navigation size={13} className={isLocating ? "animate-spin text-[#C9A24B]" : "text-[#C9A24B]"} />
-              <span>{isLocating ? "Acquiring GPS..." : "Use My Current GPS"}</span>
+              <Navigation size={14} className={isLocating ? "animate-spin text-[#9B783E]" : "text-[#9B783E]"} />
+              <span>{isLocating ? "Locating..." : "Use My Current Location"}</span>
             </button>
           )}
 
+          {/* Action 2: Coordinates Box with Copy */}
           <button
             type="button"
             onClick={handleCopyCoordinates}
-            className="bg-white border border-[#EAE3D5] text-[#7A6A5C] hover:text-[#4A0E1B] hover:border-[#C9A24B] px-2.5 py-1.5 rounded-sm transition-colors flex items-center gap-1 cursor-pointer text-xs"
-            title="Copy Latitude, Longitude to clipboard"
+            className="bg-white border border-gray-200 hover:border-[#C9A24B]/50 text-[#4A0E1B] px-4 py-2.5 rounded-lg text-xs font-mono flex items-center gap-2 shadow-xs transition-colors cursor-pointer"
+            title="Click to copy coordinates"
           >
-            {copied ? <Check size={13} className="text-green-600" /> : <Copy size={13} />}
+            {copied ? (
+              <Check size={14} className="text-green-600" />
+            ) : (
+              <Copy size={14} className="text-[#7A6A5C]" />
+            )}
             <span>{copied ? "Copied!" : `${lat.toFixed(4)}, ${lng.toFixed(4)}`}</span>
           </button>
 
+          {/* Action 3: View in Google Maps */}
           <a
-            href={readOnly ? directMapsUrl : directMapsSearchUrl}
+            href={directMapsSearchUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="bg-[#4A0E1B] text-[#FDFBF4] hover:bg-[#380A14] px-3 py-1.5 rounded-sm transition-colors flex items-center gap-1.5 text-xs font-medium shadow-xs"
-            title="Open in Google Maps for turn-by-turn navigation"
+            className="bg-[#4A0E1B] hover:bg-[#3B0A14] text-[#F3E9D8] px-4 py-2.5 rounded-lg text-xs font-jost font-medium tracking-wide flex items-center gap-2 shadow-xs transition-colors"
           >
-            <Compass size={13} className="text-[#C9A24B]" />
-            <span>{readOnly ? "Navigate in Google Maps" : "View in Google Maps"}</span>
-            <ExternalLink size={11} className="opacity-70" />
+            <MapPin size={14} className="text-[#C9A24B]" />
+            <span>View in Google Maps</span>
+            <ExternalLink size={12} className="opacity-80" />
           </a>
         </div>
       </div>
 
-      {locationStatus && (
-        <p className="text-[11px] text-[#7A6A5C] bg-[#FDFBF4] border border-[#C9A24B]/20 px-3 py-1.5 rounded-sm flex items-center gap-1.5">
-          <Sparkles size={12} className="text-[#C9A24B] shrink-0" />
-          <span>{locationStatus}</span>
-        </p>
-      )}
-
-      {/* MAP CONTAINER */}
-      <div 
-        className="relative rounded-sm overflow-hidden border-2 border-[#C9A24B]/30 shadow-md bg-[#FDFBF4]"
-        style={{ height, minHeight: "280px" }}
+      {/* 2. MAP CONTAINER WITH FLOATING SELECTED LOCATION CARD */}
+      <div
+        ref={mapContainerRef}
+        className="relative rounded-xl overflow-hidden border border-gray-200 shadow-sm bg-[#FDFBF4]"
+        style={{ height, minHeight: "360px" }}
       >
+        {/* Map / Satellite Toggle Pill (Top Left) */}
+        <div className="absolute top-3.5 left-3.5 z-[500] bg-white rounded-full p-0.5 shadow-md border border-gray-200 flex items-center text-xs font-jost">
+          <button
+            type="button"
+            onClick={() => setMapType("standard")}
+            className={`px-3 py-1 rounded-full text-xs font-medium transition-colors cursor-pointer ${
+              mapType === "standard"
+                ? "bg-gray-100 text-[#4A0E1B] font-semibold shadow-xs"
+                : "text-[#7A6A5C] hover:text-[#4A0E1B]"
+            }`}
+          >
+            Map
+          </button>
+          <button
+            type="button"
+            onClick={() => setMapType("satellite")}
+            className={`px-3 py-1 rounded-full text-xs font-medium transition-colors cursor-pointer ${
+              mapType === "satellite"
+                ? "bg-gray-100 text-[#4A0E1B] font-semibold shadow-xs"
+                : "text-[#7A6A5C] hover:text-[#4A0E1B]"
+            }`}
+          >
+            Satellite
+          </button>
+        </div>
+
+        {/* FLOATING SELECTED LOCATION OVERLAY (Right Side - exact match to user mockup) */}
+        <div className="absolute top-3.5 right-3.5 z-[500] bg-white/95 backdrop-blur-xs border border-gray-200 rounded-xl p-3.5 sm:p-4 shadow-xl w-[230px] sm:w-[260px] pointer-events-auto space-y-2.5 text-left">
+          {/* Header */}
+          <div className="flex items-center gap-2">
+            <MapPin size={15} className="text-[#4A0E1B] fill-[#4A0E1B] shrink-0" />
+            <span className="text-xs font-bold text-[#4A0E1B] font-jost">Selected Location</span>
+          </div>
+
+          {/* Address / Landmark preview */}
+          <div className="text-[11px] font-jost text-[#4A0E1B] leading-relaxed">
+            {landmark ? (
+              <p className="line-clamp-3 font-medium">{landmark}</p>
+            ) : addressDetails ? (
+              <p className="line-clamp-3">{addressDetails}</p>
+            ) : (
+              <p className="text-[#7A6A5C] italic">Click or drag pin to choose exact doorstep</p>
+            )}
+          </div>
+
+          {/* Coordinates row */}
+          <div className="pt-2 border-t border-gray-100 flex items-start gap-1.5">
+            <Compass size={13} className="text-[#C9A24B] shrink-0 mt-0.5" />
+            <div>
+              <span className="text-[10px] uppercase tracking-wider text-[#7A6A5C] font-jost block">
+                Coordinates
+              </span>
+              <span className="text-xs font-mono font-medium text-[#4A0E1B]">
+                {lat.toFixed(4)}° N, {lng.toFixed(4)}° E
+              </span>
+            </div>
+          </div>
+
+          {/* Edit Location button */}
+          {!readOnly && (
+            <button
+              type="button"
+              onClick={handleEditLocation}
+              className="w-full bg-[#FDFBF4] border border-[#E5D7B7] hover:bg-[#F5EEDC] text-[#4A0E1B] text-xs font-jost py-2 px-3 rounded-lg flex items-center justify-center gap-1.5 cursor-pointer transition-colors shadow-xs font-medium"
+            >
+              <Pencil size={12} className="text-[#4A0E1B]" />
+              <span>Edit Location</span>
+            </button>
+          )}
+        </div>
+
+        {/* MAP RENDERING: GOOGLE MAPS PLATFORM OR LEAFLET HYBRID */}
         {hasValidApiKey ? (
-          /* GOOGLE MAPS PLATFORM (Official modern @vis.gl/react-google-maps) */
           <APIProvider apiKey={apiKey}>
-            <Map
+            <GoogleMap
               defaultCenter={{ lat, lng }}
               center={{ lat, lng }}
               defaultZoom={zoom}
-              mapId="DEMO_MAP_ID"
-              internalUsageAttributionIds={["gmp_git_agentskills_v1"]}
+              mapTypeId={mapType === "satellite" ? "hybrid" : "roadmap"}
               gestureHandling={readOnly ? "none" : "auto"}
-              disableDefaultUI={readOnly}
+              disableDefaultUI={false}
               style={{ width: "100%", height: "100%" }}
               onClick={(e) => {
                 if (!readOnly && e.detail.latLng && onChange) {
                   onChange(e.detail.latLng.lat, e.detail.latLng.lng);
-                  setLocationStatus("Pin placed at selected location.");
                 }
               }}
             >
@@ -208,21 +292,22 @@ export default function GoogleDeliveryMap({
                 onDragEnd={(e) => {
                   if (!readOnly && e.latLng && onChange) {
                     onChange(e.latLng.lat(), e.latLng.lng());
-                    setLocationStatus("Delivery pin moved to new spot.");
                   }
                 }}
               >
-                <Pin 
-                  background="#4A0E1B" 
-                  borderColor="#C9A24B" 
-                  glyphColor="#C9A24B" 
-                  scale={1.2}
-                />
+                <div style={{ position: "relative", display: "flex", flexDirection: "column", alignItems: "center", transform: "translate(-50%, -100%)" }}>
+                  <div style={{ background: "white", color: "#4A0E1B", fontFamily: "'Cormorant Garamond', Georgia, serif", fontWeight: 600, fontSize: "11px", padding: "3px 10px", borderRadius: "6px", boxShadow: "0 2px 8px rgba(0,0,0,0.12)", border: "1px solid #E5D7B7", whiteSpace: "nowrap", marginBottom: "4px" }}>
+                    Your Delivery Location
+                  </div>
+                  <div style={{ position: "relative", width: "44px", height: "44px", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <div style={{ position: "absolute", width: "40px", height: "40px", borderRadius: "50%", background: "rgba(74, 14, 27, 0.15)", border: "1px solid rgba(74, 14, 27, 0.3)" }} />
+                    <MapPin size={28} className="text-[#4A0E1B] fill-[#4A0E1B] relative z-10" />
+                  </div>
+                </div>
               </AdvancedMarker>
-            </Map>
+            </GoogleMap>
           </APIProvider>
         ) : (
-          /* RESILIENT LEAFLET / OSM HYBRID MAP (Works out-of-the-box without failing while user mints key) */
           <MapContainer
             center={[lat, lng]}
             zoom={zoom}
@@ -230,77 +315,71 @@ export default function GoogleDeliveryMap({
             dragging={!readOnly}
             style={{ height: "100%", width: "100%", zIndex: 0 }}
           >
-            <LeafletClickHandler 
-              enabled={!readOnly} 
+            <LeafletClickHandler
+              enabled={!readOnly}
               onPick={(newLat, newLng) => {
                 if (onChange) onChange(newLat, newLng);
-                setLocationStatus("Pin updated on map.");
-              }} 
+              }}
             />
             <LeafletRecenter lat={lat} lng={lng} />
             <TileLayer
-              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+              url={
+                mapType === "satellite"
+                  ? "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+                  : "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+              }
             />
-            <Marker 
+            <Marker
               position={[lat, lng]}
+              icon={customDeliveryPinIcon}
               draggable={!readOnly}
               eventHandlers={{
                 dragend: (e) => {
                   const marker = e.target;
                   const position = marker.getLatLng();
                   if (onChange) onChange(position.lat, position.lng);
-                  setLocationStatus("Pin fine-tuned via drag.");
                 }
               }}
-            >
-              <Popup>
-                <div className="text-xs p-1 font-jost text-[#4A0E1B]">
-                  <strong>Exact Delivery Pinpoint</strong>
-                  <p className="text-[10px] text-[#7A6A5C]">{lat.toFixed(5)}, {lng.toFixed(5)}</p>
-                </div>
-              </Popup>
-            </Marker>
+            />
           </MapContainer>
         )}
-
-        {/* OVERLAY BADGE FOR PINPOINT ACCURACY */}
-        <div className="absolute bottom-2.5 left-2.5 z-10 bg-white/95 backdrop-blur-xs border border-[#C9A24B]/40 px-3 py-1.5 rounded-sm shadow-md flex items-center gap-2 text-[11px] text-[#4A0E1B]">
-          <MapPin size={13} className="text-[#C9A24B] shrink-0" />
-          <span className="font-semibold">{lat.toFixed(5)}° N, {lng.toFixed(5)}° E</span>
-          {gpsAccuracy && <span className="text-[10px] text-green-700 font-medium">(±{gpsAccuracy}m)</span>}
-        </div>
       </div>
 
-      {/* LANDMARK & DOORSTEP INSTRUCTIONS FOR DELIVERY RIDER */}
+      {/* 3. BOTTOM LANDMARK & DOORSTEP INSTRUCTIONS BOX (Exact match to user mockup) */}
       {!readOnly && onLandmarkChange && (
-        <div className="bg-[#FDFBF4] border border-[#C9A24B]/20 p-3 rounded-sm space-y-1.5">
-          <label className="flex items-center gap-1.5 text-xs font-semibold text-[#4A0E1B] uppercase tracking-wider">
-            <Building size={14} className="text-[#C9A24B]" />
-            <span>Delivery Landmark &amp; Doorstep Instructions (Helps Delivery Partner)</span>
+        <div className="bg-[#FDFBF4] border border-[#C9A24B]/30 rounded-xl p-4 sm:p-5 space-y-2.5">
+          <label
+            htmlFor="checkout-landmark-input"
+            className="flex items-center gap-2 text-xs font-semibold text-[#4A0E1B] font-jost uppercase tracking-[0.12em]"
+          >
+            <FileText size={18} className="text-[#C9A24B] shrink-0" />
+            <span>DELIVERY LANDMARK &amp; DOORSTEP INSTRUCTIONS (HELPS DELIVERY PARTNER)</span>
           </label>
           <input
+            id="checkout-landmark-input"
             type="text"
             value={landmark}
             onChange={(e) => onLandmarkChange(e.target.value)}
             placeholder="e.g. Opposite City Hospital Gate 2, Tower B, 4th Floor Flat 402, Ring Bell #2"
-            className="w-full bg-white border border-[#C9A24B]/30 focus:border-[#C9A24B] px-3 py-2 text-xs font-jost text-[#4A0E1B] outline-none transition-colors rounded-sm"
+            className="w-full bg-white border border-gray-200 focus:border-[#C9A24B] px-4 py-3 text-xs sm:text-sm font-jost text-[#4A0E1B] outline-none rounded-lg shadow-xs transition-colors placeholder:text-gray-400"
           />
-          <p className="text-[10px] text-[#7A6A5C]">
-            Our courier will use these pinpoint coordinates + landmark to guarantee direct, hand-delivered arrival.
-          </p>
+          <div className="flex items-center gap-1.5 text-[11px] text-[#7A6A5C] font-jost pt-0.5">
+            <Info size={13} className="shrink-0 text-[#7A6A5C]" />
+            <span>Our courier will use these pinpoint coordinates + landmark to guarantee direct, hand-delivered arrival.</span>
+          </div>
         </div>
       )}
 
-      {/* READONLY LANDMARK CALLOUT FOR ADMIN & INVOICE */}
+      {/* Read-only view for Admin / Invoice */}
       {readOnly && landmark && (
-        <div className="bg-[#FDFBF4] border border-[#C9A24B]/30 p-3 rounded-sm flex items-start gap-2.5 text-xs text-[#4A0E1B]">
-          <Building size={16} className="text-[#C9A24B] shrink-0 mt-0.5" />
+        <div className="bg-[#FDFBF4] border border-[#C9A24B]/30 p-3.5 rounded-xl flex items-start gap-2.5 text-xs text-[#4A0E1B]">
+          <FileText size={16} className="text-[#C9A24B] shrink-0 mt-0.5" />
           <div>
             <span className="font-semibold uppercase tracking-wider text-[10px] text-[#7A6A5C] block">
               Rider Doorstep &amp; Landmark Instructions
             </span>
-            <p className="font-medium text-sm text-[#4A0E1B]">{landmark}</p>
+            <p className="font-medium text-sm text-[#4A0E1B] mt-0.5">{landmark}</p>
           </div>
         </div>
       )}

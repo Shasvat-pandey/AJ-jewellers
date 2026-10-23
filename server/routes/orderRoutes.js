@@ -12,6 +12,19 @@ const { generateInvoice } = require('../services/invoiceGenerator');
 const { protect, admin } = require('../middleware/authMiddleware');
 const validate = require('../middleware/validate');
 const { orderSchema, verifyPaymentSchema } = require('../validators/schema');
+const rateLimit = require('express-rate-limit');
+
+// Rate limiter to prevent automated order spam / inventory lock exhaustion
+const orderLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 15, // limit each IP to 15 order placements per 15 minutes
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: 'Too many order attempts. Please wait 15 minutes before placing another order.'
+  }
+});
 
 // --- SEC-05: SECURE EMAIL HUB (No hardcoded credentials) ---
 const SENDER_EMAIL = process.env.EMAIL_USER;
@@ -217,9 +230,173 @@ async function sendDeliveryAndPaidInvoiceEmail(order, force = false) {
   }
 }
 
+/**
+ * Resolves market metal rate per gram based on product/variant purity.
+ * Supported purities:
+ * - 24K Gold -> marketRates.rate24k
+ * - 22K Gold -> marketRates.rate22k
+ * - 18K Gold -> marketRates.rate18k
+ * - 14K Gold -> marketRates.rate24k * (14/24)
+ * - Silver (925) -> marketRates.silver
+ * If lockedRate is supplied, benchmark 22K is lockedRate, other gold purities scale proportionally.
+ */
+function resolveMetalRate(purity, marketRates, lockedRate = null) {
+  if (!marketRates) return null;
+  const p = (purity || '').trim().toLowerCase();
+
+  const base22k = (lockedRate && lockedRate > 0) ? lockedRate : (Number(marketRates.rate22k) || 0);
+
+  if (p.includes('24k') || p === '24k gold') {
+    if (lockedRate && lockedRate > 0) {
+      return Math.round(lockedRate * (24 / 22));
+    }
+    return Number(marketRates.rate24k) || 0;
+  }
+  if (p.includes('22k') || p === '22k gold') {
+    return base22k;
+  }
+  if (p.includes('18k') || p === '18k gold') {
+    if (lockedRate && lockedRate > 0) {
+      return Math.round(lockedRate * (18 / 22));
+    }
+    return Number(marketRates.rate18k) || 0;
+  }
+  if (p.includes('14k') || p === '14k gold') {
+    const rate24 = (lockedRate && lockedRate > 0)
+      ? Math.round(lockedRate * (24 / 22))
+      : (Number(marketRates.rate24k) || Math.round(base22k * (24 / 22)));
+    return Math.round(rate24 * (14 / 24));
+  }
+  if (p.includes('silver') || p.includes('925')) {
+    return Number(marketRates.silver) || 0;
+  }
+
+  // Fallback to 22K if gold is indicated without karat or standard benchmark
+  if (base22k > 0 && (p.includes('gold') || !p)) {
+    return base22k;
+  }
+
+  return null;
+}
+
+// @route   POST /api/orders/validate-cart
+// @desc    Pre-checkout stock and pricing validation (read-only, does not decrement stock)
+router.post('/validate-cart', protect, async (req, res) => {
+  try {
+    const rawItems = req.body.items || [];
+    if (!Array.isArray(rawItems) || rawItems.length === 0) {
+      return res.status(400).json({ success: false, message: 'Cart items cannot be empty.' });
+    }
+
+    const settings = await StoreSettings.findOne();
+    const marketRates = settings?.marketRates || {
+      rate24k: 7450, rate22k: 6830, rate18k: 5580, silver: 92, diamond: 45000
+    };
+
+    let calculatedGrossTotal = 0;
+    let calculatedTaxTotal = 0;
+    const validatedItems = [];
+    const issues = [];
+
+    for (const item of rawItems) {
+      if (!item.product) continue;
+      const product = await Product.findById(item.product);
+      if (!product) {
+        issues.push({
+          productId: item.product,
+          issue: 'Product is no longer available or was removed from catalog.'
+        });
+        continue;
+      }
+
+      const quantity = Math.max(1, parseInt(item.quantity) || 1);
+      let availableStock = product.stock;
+      let purity = product.purity || '22K Gold';
+      let weight = product.weight || 1;
+      let makingChargesPercent = product.makingCharges || 0;
+      let gstPercent = product.gst !== undefined && product.gst !== null ? product.gst : 3;
+
+      if (item.variant && product.variants && product.variants.length > 0) {
+        const matchedVariant = product.variants.find(v => v._id.toString() === item.variant.toString());
+        if (matchedVariant) {
+          availableStock = matchedVariant.stock;
+          if (matchedVariant.purity && matchedVariant.purity !== 'Same as Base' && matchedVariant.purity !== 'None') {
+            purity = matchedVariant.purity;
+          }
+          if (matchedVariant.weight) weight = matchedVariant.weight;
+          if (matchedVariant.makingCharges !== undefined) makingChargesPercent = matchedVariant.makingCharges;
+          if (matchedVariant.gst !== undefined) gstPercent = matchedVariant.gst;
+        }
+      }
+
+      if (availableStock < quantity) {
+        issues.push({
+          productId: product._id,
+          name: product.name,
+          issue: `Insufficient stock. Only ${availableStock} available (requested ${quantity}).`
+        });
+      }
+
+      let serverPrice = 0;
+      if (product.price && product.price > 0 && !product.weight) {
+        serverPrice = product.price;
+      } else {
+        const metalRate = resolveMetalRate(purity, marketRates);
+        const metalValue = (metalRate || 0) * weight;
+        const diamondValue = product.diamondValue || 0;
+        const makingChargesAmt = metalValue * (makingChargesPercent / 100);
+        const preGstTotal = metalValue + diamondValue + makingChargesAmt;
+        const gstAmount = preGstTotal * (gstPercent / 100);
+        serverPrice = Math.round(preGstTotal + gstAmount);
+      }
+
+      const clientPrice = Number(item.price) || 0;
+      const priceDifference = Math.abs(serverPrice - clientPrice);
+
+      const lineTotal = serverPrice * quantity;
+      calculatedGrossTotal += lineTotal;
+      const gstMultiplier = 1 + (gstPercent / 100);
+      calculatedTaxTotal += (lineTotal - (lineTotal / gstMultiplier));
+
+      validatedItems.push({
+        product: product._id,
+        name: product.name,
+        availableStock,
+        requestedQuantity: quantity,
+        serverPrice,
+        clientPrice,
+        priceDifference,
+        purity,
+        inStock: availableStock >= quantity
+      });
+    }
+
+    const subtotal = Math.round(calculatedGrossTotal - calculatedTaxTotal);
+    const tax = Math.round(calculatedTaxTotal);
+    const shipping = calculatedGrossTotal > 50000 ? 0 : 150;
+    const total = calculatedGrossTotal + shipping;
+
+    res.status(200).json({
+      success: true,
+      valid: issues.length === 0,
+      issues,
+      items: validatedItems,
+      breakdown: {
+        subtotal,
+        tax,
+        shipping,
+        total
+      }
+    });
+  } catch (error) {
+    console.error("Validate cart error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 // @route   POST /api/orders
 // @desc    SEC-02, SEC-03, FT-05, FT-06: Create order with server-authoritative pricing and force Pending payment
-router.post('/', protect, validate(orderSchema), async (req, res) => {
+router.post('/', orderLimiter, protect, validate(orderSchema), async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
 
@@ -236,7 +413,6 @@ router.post('/', protect, validate(orderSchema), async (req, res) => {
     const lockDurationMinutes = settings?.marketRates?.lockDurationMinutes || 15;
 
     // Validate locked rate if supplied by client
-    let authoritativeGoldRate = settings?.marketRates?.rate22k || 7500;
     let lockedRateApplied = false;
 
     if (req.body.lockedGoldRate && req.body.lockedGoldRateTimestamp) {
@@ -244,7 +420,6 @@ router.post('/', protect, validate(orderSchema), async (req, res) => {
       const elapsedMinutes = (Date.now() - lockTime) / (1000 * 60);
 
       if (elapsedMinutes <= lockDurationMinutes && req.body.lockedGoldRate > 0) {
-        authoritativeGoldRate = req.body.lockedGoldRate;
         lockedRateApplied = true;
       } else {
         await session.abortTransaction();
@@ -256,7 +431,8 @@ router.post('/', protect, validate(orderSchema), async (req, res) => {
       }
     }
 
-    let calculatedSubtotal = 0;
+    let calculatedGrossTotal = 0;
+    let calculatedTaxTotal = 0;
     const validatedItems = [];
 
     // Authoritative calculation and atomic inventory deduction
@@ -296,7 +472,8 @@ router.post('/', protect, validate(orderSchema), async (req, res) => {
         }
       }
 
-      // Determine product weight, making charges, and diamond value from trusted DB
+      // Determine purity, product weight, making charges, and diamond value from trusted DB
+      let purity = product.purity || '22K Gold';
       let weight = product.weight || 1;
       let makingChargesPercent = product.makingCharges || 0;
       let gstPercent = product.gst !== undefined && product.gst !== null ? product.gst : 3;
@@ -304,6 +481,9 @@ router.post('/', protect, validate(orderSchema), async (req, res) => {
       if (item.variant && product.variants && product.variants.length > 0) {
         const matchedVariant = product.variants.find(v => v._id.toString() === item.variant.toString());
         if (matchedVariant) {
+          if (matchedVariant.purity && matchedVariant.purity !== 'Same as Base' && matchedVariant.purity !== 'None') {
+            purity = matchedVariant.purity;
+          }
           if (matchedVariant.weight) weight = matchedVariant.weight;
           if (matchedVariant.makingCharges !== undefined) makingChargesPercent = matchedVariant.makingCharges;
           if (matchedVariant.gst !== undefined) gstPercent = matchedVariant.gst;
@@ -316,8 +496,14 @@ router.post('/', protect, validate(orderSchema), async (req, res) => {
         // Fixed price item
         itemPrice = product.price;
       } else {
-        // Dynamic jewellery pricing: (Gold Rate * Weight) + Diamond Value + Making Charges + GST
-        const metalValue = authoritativeGoldRate * weight;
+        // Purity-specific rate resolution
+        const metalRate = resolveMetalRate(purity, settings?.marketRates, lockedRateApplied ? req.body.lockedGoldRate : null);
+        if (!metalRate || metalRate <= 0) {
+          throw new Error(`Pricing rate unavailable for purity "${purity}" on product: ${product.name}`);
+        }
+
+        // Dynamic jewellery pricing: (Metal Rate * Weight) + Diamond Value + Making Charges + GST
+        const metalValue = metalRate * weight;
         const diamondValue = product.diamondValue || 0;
         const makingChargesAmt = metalValue * (makingChargesPercent / 100);
         const preGstTotal = metalValue + diamondValue + makingChargesAmt;
@@ -325,12 +511,18 @@ router.post('/', protect, validate(orderSchema), async (req, res) => {
         itemPrice = Math.round(preGstTotal + gstAmount);
       }
 
-      calculatedSubtotal += (itemPrice * quantity);
+      const lineItemTotal = itemPrice * quantity;
+      calculatedGrossTotal += lineItemTotal;
+
+      const gstMultiplier = 1 + (gstPercent / 100);
+      const preTaxLine = lineItemTotal / gstMultiplier;
+      const taxLine = lineItemTotal - preTaxLine;
+      calculatedTaxTotal += taxLine;
 
       validatedItems.push({
         product: product._id,
         name: product.name,
-        specs: item.specs || (product.karat ? `${product.karat} | ${weight}g` : `${weight}g`),
+        specs: item.specs || (purity ? `${purity} | ${weight}g` : `${weight}g`),
         price: itemPrice, // Server-calculated price
         image: product.images && product.images[0] ? product.images[0] : item.image,
         quantity: quantity,
@@ -344,9 +536,11 @@ router.post('/', protect, validate(orderSchema), async (req, res) => {
       }
     }
 
-    // Authoritative shipping & total
-    const shipping = calculatedSubtotal > 50000 ? 0 : 150;
-    const authoritativeTotal = calculatedSubtotal + shipping;
+    // Authoritative financial breakdown reconciliation
+    const calculatedSubtotal = Math.round(calculatedGrossTotal - calculatedTaxTotal);
+    const calculatedTax = Math.round(calculatedTaxTotal);
+    const shipping = calculatedGrossTotal > 50000 ? 0 : 150;
+    const authoritativeTotal = calculatedGrossTotal + shipping;
 
     // SEC-02 & Business Mandate: ONLY Cash and Bank Transfer/UPI supported
     const rawMethod = (req.body.paymentMethod || '').toLowerCase();
@@ -357,6 +551,12 @@ router.post('/', protect, validate(orderSchema), async (req, res) => {
       sanitizedPaymentMethod = 'boutique';
     } else {
       sanitizedPaymentMethod = 'cash';
+    }
+
+    // Extract customer-supplied bank transfer reference / UTR (Task 4)
+    let paymentRef = '';
+    if (sanitizedPaymentMethod === 'bank_transfer' && req.body.paymentReference) {
+      paymentRef = String(req.body.paymentReference).trim().slice(0, 100);
     }
 
     // Extract delivery location & GPS coordinates
@@ -373,7 +573,7 @@ router.post('/', protect, validate(orderSchema), async (req, res) => {
       deliveryLocation.mapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${deliveryLocation.lat},${deliveryLocation.lng}`;
     }
 
-    // Build trusted order document
+    // Build trusted order document with full financial breakdown persistence (Task 2)
     const orderData = {
       userId: req.user._id,
       customerName: req.body.customerName || req.user.name,
@@ -385,9 +585,13 @@ router.post('/', protect, validate(orderSchema), async (req, res) => {
       notes: req.body.notes || '',
       deliveryLocation,
       items: validatedItems,
-      totalAmount: authoritativeTotal, // Authoritative total
+      subtotalAmount: calculatedSubtotal, // Pre-tax subtotal (Task 2)
+      taxAmount: calculatedTax,           // Total GST amount (Task 2)
+      shippingFee: shipping,              // Insured shipping charge (Task 2)
+      totalAmount: authoritativeTotal,     // Authoritative total
       paymentMethod: sanitizedPaymentMethod,
       paymentStatus: 'Pending', // ALWAYS starts as Pending
+      paymentReference: paymentRef, // Customer UTR / Ref (Task 4)
       orderStatus: 'Processing',
       paidAt: null,
       verifiedBy: null,
@@ -398,7 +602,7 @@ router.post('/', protect, validate(orderSchema), async (req, res) => {
           status: 'Order Placed',
           actor: req.user.email,
           timestamp: new Date(),
-          note: `Order placed via ${sanitizedPaymentMethod}. Initial payment status: Pending.`
+          note: `Order placed via ${sanitizedPaymentMethod}.${paymentRef ? ` Initial UTR: ${paymentRef}.` : ''} Initial payment status: Pending.`
         }
       ]
     };
@@ -614,7 +818,14 @@ router.put('/:id/payment-status', protect, admin, validate(verifyPaymentSchema),
 // @desc    Get all orders (Admin sees all, Customer sees own)
 router.get('/', protect, async (req, res) => {
   try {
-    const query = req.user.role === 'admin' ? {} : { userId: req.user._id };
+    const userQuery = {
+      $or: [
+        { userId: req.user._id.toString() },
+        { userId: req.user._id },
+        { email: req.user.email ? req.user.email.toLowerCase() : '' }
+      ]
+    };
+    const query = req.user.role === 'admin' ? {} : userQuery;
     const orders = await Order.find(query).sort({ createdAt: -1 });
     res.status(200).json({ success: true, count: orders.length, data: orders });
   } catch (error) {
@@ -627,9 +838,14 @@ router.get('/', protect, async (req, res) => {
 // @desc    Get single order by ID
 router.get('/:id', protect, async (req, res) => {
   try {
+    const userConditions = [
+      { userId: req.user._id.toString() },
+      { userId: req.user._id },
+      { email: req.user.email ? req.user.email.toLowerCase() : '' }
+    ];
     const query = req.user.role === 'admin' 
       ? { _id: req.params.id }
-      : { _id: req.params.id, userId: req.user._id };
+      : { _id: req.params.id, $or: userConditions };
     const order = await Order.findOne(query);
     if (!order) {
       return res.status(404).json({ success: false, message: "Order not found" });
@@ -645,9 +861,14 @@ router.get('/:id', protect, async (req, res) => {
 // @desc    Download PDF invoice for an order (Authorized customer or admin)
 router.get('/:id/invoice', protect, async (req, res) => {
   try {
+    const userConditions = [
+      { userId: req.user._id.toString() },
+      { userId: req.user._id },
+      { email: req.user.email ? req.user.email.toLowerCase() : '' }
+    ];
     const query = req.user.role === 'admin' 
       ? { _id: req.params.id }
-      : { _id: req.params.id, userId: req.user._id };
+      : { _id: req.params.id, $or: userConditions };
     const order = await Order.findOne(query);
     if (!order) {
       return res.status(404).json({ success: false, message: "Order not found" });
@@ -789,7 +1010,12 @@ router.put('/:id/return-status', protect, admin, async (req, res) => {
 router.post('/:id/return', protect, async (req, res) => {
   try {
     const { type, reason } = req.body;
-    const order = await Order.findOne({ _id: req.params.id, userId: req.user._id });
+    const userConditions = [
+      { userId: req.user._id.toString() },
+      { userId: req.user._id },
+      { email: req.user.email ? req.user.email.toLowerCase() : '' }
+    ];
+    const order = await Order.findOne({ _id: req.params.id, $or: userConditions });
     if (!order) {
       return res.status(404).json({ success: false, message: 'Order not found' });
     }

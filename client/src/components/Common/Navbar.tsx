@@ -30,27 +30,30 @@ export default function Navbar() {
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  // --- NEW: Live Tracker for Shopping Bag ---
+  // --- Live Tracker for Shopping Bag ---
   useEffect(() => {
     const updateCartCount = () => {
-      const cart = JSON.parse(localStorage.getItem("aj_cart") || "[]");
-      // Reduce adds up the "quantity" of every item in the cart
-      const totalItems = cart.reduce((total: number, item: any) => total + item.quantity, 0);
-      setCartCount(totalItems);
+      try {
+        const cart = JSON.parse(localStorage.getItem("aj_cart") || "[]");
+        const totalItems = cart.reduce((total: number, item: any) => total + (Number(item.quantity) || 0), 0);
+        setCartCount(totalItems);
+      } catch {
+        setCartCount(0);
+      }
     };
 
     // Run once on load
     updateCartCount();
 
-    // Listen for storage changes across different tabs
+    // Listen for cross-tab storage changes, in-tab custom events, and window focus
     window.addEventListener("storage", updateCartCount);
-
-    // Fast interval to instantly catch when an item is added on the current page
-    const interval = setInterval(updateCartCount, 500);
+    window.addEventListener("cart_updated", updateCartCount);
+    window.addEventListener("focus", updateCartCount);
 
     return () => {
       window.removeEventListener("storage", updateCartCount);
-      clearInterval(interval);
+      window.removeEventListener("cart_updated", updateCartCount);
+      window.removeEventListener("focus", updateCartCount);
     };
   }, []);
 

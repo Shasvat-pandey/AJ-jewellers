@@ -70,6 +70,26 @@ router.post(
   }
 );
 
+// @route   GET /api/reviews/my
+// @desc    Get all reviews submitted by the logged-in customer
+router.get('/my', protect, async (req, res) => {
+  try {
+    const reviews = await Review.find({ user: req.user._id })
+      .populate('product', 'name sku images')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    res.status(200).json({
+      success: true,
+      count: reviews.length,
+      data: reviews.map(normalizeReview),
+    });
+  } catch (error) {
+    console.error('Error fetching user reviews:', error);
+    res.status(500).json({ success: false, message: 'Server Error' });
+  }
+});
+
 // @route   GET /api/reviews/product/:productId
 // @desc    Get all approved reviews for a specific product (Public)
 router.get('/product/:productId', async (req, res) => {

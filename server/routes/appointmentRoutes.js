@@ -97,6 +97,53 @@ router.post('/', appointmentLimiter, optionalProtect, validate(appointmentSchema
   }
 });
 
+// @route   GET /api/appointments/my
+// @desc    Get appointments for the logged-in user (matched by userId or phone)
+router.get('/my', protect, async (req, res) => {
+  try {
+    const rawPhone = req.user.phone ? req.user.phone.replace(/\D/g, '') : '';
+    const phoneConditions = [];
+    if (rawPhone && rawPhone.length === 10) {
+      phoneConditions.push({ phone: rawPhone });
+    }
+    if (req.user.phone) {
+      phoneConditions.push({ phone: req.user.phone });
+    }
+    const query = phoneConditions.length > 0
+      ? { $or: [{ userId: req.user._id }, ...phoneConditions] }
+      : { userId: req.user._id };
+
+    const appointments = await Appointment.find(query).sort({ preferredDate: 1, createdAt: -1 });
+    res.status(200).json({ success: true, count: appointments.length, data: appointments });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// @route   PUT /api/appointments/:id/cancel
+// @desc    Cancel an appointment by the customer
+router.put('/:id/cancel', protect, async (req, res) => {
+  try {
+    const appointment = await Appointment.findById(req.params.id);
+    if (!appointment) {
+      return res.status(404).json({ success: false, message: 'Appointment not found' });
+    }
+
+    const isOwner = (appointment.userId && appointment.userId.toString() === req.user._id.toString()) ||
+                    (req.user.phone && appointment.phone && req.user.phone.replace(/\D/g, '') === appointment.phone.replace(/\D/g, ''));
+
+    if (!isOwner && req.user.role !== 'admin') {
+      return res.status(403).json({ success: false, message: 'Not authorized to cancel this appointment' });
+    }
+
+    appointment.status = 'Cancelled';
+    await appointment.save();
+    res.status(200).json({ success: true, message: 'Appointment cancelled successfully', data: appointment });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 // @route   GET /api/appointments
 // @desc    Get all appointments (Admin only)
 router.get('/', protect, admin, async (req, res) => {

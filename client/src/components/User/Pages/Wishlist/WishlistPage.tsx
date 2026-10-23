@@ -6,6 +6,7 @@ import ProductImage from "../../Components/Product/ProductImage";
 import { getImageUrl as resolveImageUrl } from "../../../../utils/imageUrl";
 import { getWishlistItems, saveWishlistItems } from "../../../../utils/wishlist";
 import { API_URL } from "../../../../utils/api";
+import { calculatePrice as calcPrice, formatINR as formatCurrency } from "../../../../utils/price";
 
 export default function WishlistPage() {
   const { showToast } = useToast();
@@ -51,29 +52,11 @@ export default function WishlistPage() {
 
   // --- DYNAMIC PRICING ENGINE ---
   const calculatePrice = (item: any) => {
-    if (!marketRates || !item) return 0;
-
-    let metalRate = 0;
-    if (item.purity === "24K Gold") metalRate = marketRates.rate24k;
-    else if (item.purity === "22K Gold") metalRate = marketRates.rate22k;
-    else if (item.purity === "18K Gold") metalRate = marketRates.rate18k;
-    else if (item.purity === "Silver (925)") metalRate = marketRates.silver;
-
-    const metalValue = metalRate * (Number(item.weight) || 0);
-    const diamondValue = Number(item.diamondValue) || 0;
-    const makingChargesAmt = metalValue * ((Number(item.makingCharges) || 0) / 100);
-    
-    const preGstTotal = metalValue + diamondValue + makingChargesAmt;
-    const gstPercent = item.gst !== undefined && item.gst !== null ? Number(item.gst) : 3;
-    const gstAmount = preGstTotal * (gstPercent / 100);
-    
-    return preGstTotal + gstAmount;
+    return calcPrice(item, marketRates);
   };
 
-  const formatINR = (amount: number) => {
-    return new Intl.NumberFormat('en-IN', {
-      maximumFractionDigits: 0,
-    }).format(amount);
+  const formatINR = (amount: number | string | null | undefined) => {
+    return formatCurrency(amount);
   };
 
   // Centralised resolver: handles legacy string URLs + new variant objects

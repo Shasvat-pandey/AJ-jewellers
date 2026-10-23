@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
-import { MapPin, Truck, AlertCircle, Building2, Wallet } from "lucide-react";
+import { useNavigate, Link } from "react-router-dom";
+import { MapPin, Truck, AlertCircle, Building2, Wallet, CheckCircle2, Map } from "lucide-react";
 import GoogleDeliveryMap from "../../../Common/GoogleDeliveryMap";
 import { useAuth } from "../../../../components/Common/context/AuthContext";
 import { useToast } from "../../../../components/Common/context/ToastContext";
@@ -31,6 +31,7 @@ export default function CheckoutPage() {
     pincode: "",
     landmark: "",
     payment: "cash", // 'cash' or 'bank_transfer'
+    paymentReference: "",
     notes: ""
   });
   const [mapPosition, setMapPosition] = useState({ lat: 22.5726, lng: 88.3639 });
@@ -39,6 +40,7 @@ export default function CheckoutPage() {
   const [locationLabel, setLocationLabel] = useState("");
   const [pinManual, setPinManual] = useState(false);
   const [locateNonce, setLocateNonce] = useState(0);
+  const [cartValidationWarning, setCartValidationWarning] = useState<string | null>(null);
 
   const [bankDetails, setBankDetails] = useState({
     accountName: "AJ JEWELLERS PRIVATE LIMITED",
@@ -55,13 +57,47 @@ export default function CheckoutPage() {
     if (cart.length === 0) navigate("/bag");
   }, [cart.length, navigate]);
 
+  // Pre-checkout stock and pricing validation
+  useEffect(() => {
+    if (cart.length === 0) return;
+    const token = getAuthToken();
+    fetch(`${API_URL}/orders/validate-cart`, {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {})
+      },
+      body: JSON.stringify({
+        items: cart.map(item => ({
+          product: item._id,
+          variant: item.variantId,
+          quantity: item.quantity,
+          price: item.price
+        }))
+      })
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (data.success && !data.valid && data.issues?.length > 0) {
+          setCartValidationWarning(data.issues.map((i: any) => i.issue).join(" • "));
+        }
+      })
+      .catch(() => { });
+  }, [cart.length]);
+
+  // Safe prefill of all logged-in customer details including address
   useEffect(() => {
     if (user) {
       setFormData(prev => ({
         ...prev,
-        name: user.name || "",
-        email: user.email || "",
-        phone: user.phone || ""
+        name: user.name || prev.name,
+        email: user.email || prev.email,
+        phone: user.phone || prev.phone,
+        address: user.address || prev.address,
+        city: user.city || prev.city,
+        state: user.state || prev.state,
+        pincode: user.pincode || prev.pincode
       }));
     }
   }, [user]);
@@ -75,7 +111,7 @@ export default function CheckoutPage() {
           setBankDetails(prev => ({ ...prev, ...data.data.bankDetails }));
         }
       })
-      .catch(() => {});
+      .catch(() => { });
   }, []);
 
   const cartTotal = cart.reduce((sum: number, item: CartItem) => sum + (Number(item.price) * item.quantity), 0);
@@ -132,12 +168,26 @@ export default function CheckoutPage() {
     e.preventDefault();
 
     if (!user) {
-      requireAuth(() => {}, "Please sign in to place and confirm your order");
+      requireAuth(() => { }, "Please sign in to place and confirm your order");
       return;
     }
 
     if (!formData.name || !formData.email || !formData.phone || !formData.address || !formData.city || !formData.state || !formData.pincode) {
-      showToast("Please fill in all required fields.", "error");
+      showToast("Please fill in all required delivery fields.", "error");
+      return;
+    }
+
+    // Strict 10-digit phone sanitization
+    const cleanPhone = formData.phone.replace(/\D/g, '').slice(-10);
+    if (cleanPhone.length !== 10) {
+      showToast("Please enter a valid 10-digit mobile number (e.g. 9876543210).", "error");
+      return;
+    }
+
+    // Strict 6-digit PIN code validation
+    const cleanPincode = formData.pincode.replace(/\D/g, '').slice(0, 6);
+    if (cleanPincode.length !== 6) {
+      showToast("Please enter a valid 6-digit Indian PIN code.", "error");
       return;
     }
 
@@ -156,21 +206,22 @@ export default function CheckoutPage() {
 
       const orderPayload = {
         userId: user?._id || "",
-        customerName: formData.name,
-        phone: formData.phone,
-        email: formData.email,
-        city: `${formData.city}, ${formData.state}`,
-        pincode: formData.pincode,
-        address: formData.address,
-        notes: formData.notes,
+        customerName: formData.name.trim(),
+        phone: cleanPhone,
+        email: formData.email.trim(),
+        city: `${formData.city.trim()}, ${formData.state.trim()}`,
+        pincode: cleanPincode,
+        address: formData.address.trim(),
+        notes: formData.notes.trim(),
         deliveryLocation: {
           lat: mapPosition.lat,
           lng: mapPosition.lng,
           landmark: formData.landmark || "",
-          formattedAddress: `${formData.address}, ${formData.city}, ${formData.state} - ${formData.pincode}`,
+          formattedAddress: `${formData.address}, ${formData.city}, ${formData.state} - ${cleanPincode}`,
           mapsUrl: `https://www.google.com/maps/dir/?api=1&destination=${mapPosition.lat},${mapPosition.lng}`
         },
         paymentMethod: formData.payment,
+        paymentReference: formData.paymentReference.trim(),
         items: formattedItems
       };
 
@@ -190,16 +241,17 @@ export default function CheckoutPage() {
       if (data.success) {
         localStorage.removeItem("aj_cart");
         window.dispatchEvent(new Event("storage"));
+        window.dispatchEvent(new Event("cart_updated"));
 
         showToast("Order placed successfully! Initial status: Pending Verification.", "success");
         const orderRef = `AJ-${data.data._id.toString().slice(-6).toUpperCase()}`;
-        navigate("/order-confirmed", { 
-          state: { 
-            orderId: data.data._id, 
+        navigate("/order-confirmed", {
+          state: {
+            orderId: data.data._id,
             orderRef,
             paymentMethod: formData.payment,
             paymentStatus: data.data.paymentStatus || 'Pending'
-          } 
+          }
         });
         window.scrollTo(0, 0);
       } else {
@@ -228,12 +280,25 @@ export default function CheckoutPage() {
 
         <div className="lg:col-span-7">
           <form onSubmit={handleCheckout} className="space-y-6 md:space-y-8">
+            {/* Pre-checkout Cart Validation Alert */}
+            {cartValidationWarning && (
+              <div className="bg-amber-50 border-l-4 border-amber-500 p-4 rounded-sm flex items-start gap-3">
+                <AlertCircle size={18} className="text-amber-600 shrink-0 mt-0.5" />
+                <div className="text-xs font-jost text-amber-900">
+                  <span className="font-semibold uppercase tracking-wider block text-[10px] text-amber-800">
+                    Important Order Notice
+                  </span>
+                  <span>{cartValidationWarning}</span>
+                </div>
+              </div>
+            )}
+
             {!user && (
               <div className="bg-[#C9A24B]/10 border border-[#C9A24B]/30 px-5 py-3.5 rounded-sm flex items-center justify-between">
                 <span className="font-jost text-xs text-[#4A0E1B]">Already have an account with us?</span>
                 <button
                   type="button"
-                  onClick={() => requireAuth(() => {}, "Sign in for a faster checkout")}
+                  onClick={() => requireAuth(() => { }, "Sign in for a faster checkout")}
                   className="font-jost text-xs tracking-wider uppercase text-[#C9A24B] font-semibold hover:underline"
                 >
                   Sign In
@@ -250,55 +315,56 @@ export default function CheckoutPage() {
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
                 <div>
-                  <label className="block font-jost text-[11px] tracking-[0.12em] text-[#7A6A5C] mb-2 uppercase">Full Name *</label>
-                  <input type="text" name="name" required value={formData.name} onChange={handleChange} className="w-full bg-white border border-[#4A0E1B]/20 focus:border-[#C9A24B] px-4 py-3 font-jost text-sm text-[#4A0E1B] outline-none transition-colors" placeholder="Ananya Sharma" />
+                  <label htmlFor="checkout-name" className="block font-jost text-[11px] tracking-[0.12em] text-[#7A6A5C] mb-2 uppercase">Full Name *</label>
+                  <input id="checkout-name" type="text" name="name" required value={formData.name} onChange={handleChange} className="w-full bg-white border border-[#4A0E1B]/20 focus:border-[#C9A24B] px-4 py-3 font-jost text-sm text-[#4A0E1B] outline-none transition-colors" placeholder="Ananya Sharma" />
                 </div>
                 <div>
-                  <label className="block font-jost text-[11px] tracking-[0.12em] text-[#7A6A5C] mb-2 uppercase">Email *</label>
-                  <input type="email" name="email" required value={formData.email} onChange={handleChange} className="w-full bg-white border border-[#4A0E1B]/20 focus:border-[#C9A24B] px-4 py-3 font-jost text-sm text-[#4A0E1B] outline-none transition-colors" placeholder="ananya@example.com" />
+                  <label htmlFor="checkout-email" className="block font-jost text-[11px] tracking-[0.12em] text-[#7A6A5C] mb-2 uppercase">Email *</label>
+                  <input id="checkout-email" type="email" name="email" required value={formData.email} onChange={handleChange} className="w-full bg-white border border-[#4A0E1B]/20 focus:border-[#C9A24B] px-4 py-3 font-jost text-sm text-[#4A0E1B] outline-none transition-colors" placeholder="ananya@example.com" />
                 </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
                 <div>
-                  <label className="block font-jost text-[11px] tracking-[0.12em] text-[#7A6A5C] mb-2 uppercase">Phone Number *</label>
-                  <input type="tel" name="phone" required value={formData.phone} onChange={handleChange} className="w-full bg-white border border-[#4A0E1B]/20 focus:border-[#C9A24B] px-4 py-3 font-jost text-sm text-[#4A0E1B] outline-none transition-colors" placeholder="+91 98765 43210" />
+                  <label htmlFor="checkout-phone" className="block font-jost text-[11px] tracking-[0.12em] text-[#7A6A5C] mb-2 uppercase">Phone Number (10 digits) *</label>
+                  <input id="checkout-phone" type="tel" name="phone" required maxLength={10} value={formData.phone} onChange={handleChange} className="w-full bg-white border border-[#4A0E1B]/20 focus:border-[#C9A24B] px-4 py-3 font-jost text-sm text-[#4A0E1B] outline-none transition-colors" placeholder="9876543210" />
                 </div>
                 <div>
-                  <label className="block font-jost text-[11px] tracking-[0.12em] text-[#7A6A5C] mb-2 uppercase">Pincode *</label>
-                  <input type="text" name="pincode" required value={formData.pincode} onChange={handleChange} maxLength={6} className="w-full bg-white border border-[#4A0E1B]/20 focus:border-[#C9A24B] px-4 py-3 font-jost text-sm text-[#4A0E1B] outline-none transition-colors" placeholder="700001" />
+                  <label htmlFor="checkout-pincode" className="block font-jost text-[11px] tracking-[0.12em] text-[#7A6A5C] mb-2 uppercase">Pincode (6 digits) *</label>
+                  <input id="checkout-pincode" type="text" name="pincode" required value={formData.pincode} onChange={handleChange} maxLength={6} className="w-full bg-white border border-[#4A0E1B]/20 focus:border-[#C9A24B] px-4 py-3 font-jost text-sm text-[#4A0E1B] outline-none transition-colors" placeholder="700001" />
                 </div>
               </div>
 
               <div className="mb-4">
-                <label className="block font-jost text-[11px] tracking-[0.12em] text-[#7A6A5C] mb-2 uppercase">Street Address *</label>
-                <textarea name="address" required rows={3} value={formData.address} onChange={handleChange} className="w-full bg-white border border-[#4A0E1B]/20 focus:border-[#C9A24B] px-4 py-3 font-jost text-sm text-[#4A0E1B] outline-none transition-colors resize-none" placeholder="Flat No, Wing, Street, Landmark"></textarea>
+                <label htmlFor="checkout-address" className="block font-jost text-[11px] tracking-[0.12em] text-[#7A6A5C] mb-2 uppercase">Street Address *</label>
+                <textarea id="checkout-address" name="address" required rows={3} value={formData.address} onChange={handleChange} className="w-full bg-white border border-[#4A0E1B]/20 focus:border-[#C9A24B] px-4 py-3 font-jost text-sm text-[#4A0E1B] outline-none transition-colors resize-none" placeholder="Flat No, Wing, Street, Landmark"></textarea>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block font-jost text-[11px] tracking-[0.12em] text-[#7A6A5C] mb-2 uppercase">City *</label>
-                  <input type="text" name="city" required value={formData.city} onChange={handleChange} className="w-full bg-white border border-[#4A0E1B]/20 focus:border-[#C9A24B] px-4 py-3 font-jost text-sm text-[#4A0E1B] outline-none transition-colors" placeholder="Kolkata" />
+                  <label htmlFor="checkout-city" className="block font-jost text-[11px] tracking-[0.12em] text-[#7A6A5C] mb-2 uppercase">City *</label>
+                  <input id="checkout-city" type="text" name="city" required value={formData.city} onChange={handleChange} className="w-full bg-white border border-[#4A0E1B]/20 focus:border-[#C9A24B] px-4 py-3 font-jost text-sm text-[#4A0E1B] outline-none transition-colors" placeholder="Kolkata" />
                 </div>
                 <div>
-                  <label className="block font-jost text-[11px] tracking-[0.12em] text-[#7A6A5C] mb-2 uppercase">State *</label>
-                  <input type="text" name="state" required value={formData.state} onChange={handleChange} className="w-full bg-white border border-[#4A0E1B]/20 focus:border-[#C9A24B] px-4 py-3 font-jost text-sm text-[#4A0E1B] outline-none transition-colors" placeholder="West Bengal" />
+                  <label htmlFor="checkout-state" className="block font-jost text-[11px] tracking-[0.12em] text-[#7A6A5C] mb-2 uppercase">State *</label>
+                  <input id="checkout-state" type="text" name="state" required value={formData.state} onChange={handleChange} className="w-full bg-white border border-[#4A0E1B]/20 focus:border-[#C9A24B] px-4 py-3 font-jost text-sm text-[#4A0E1B] outline-none transition-colors" placeholder="West Bengal" />
                 </div>
               </div>
             </div>
 
             {/* GOOGLE MAPS PRECISION PINPOINT & DELIVERY COORDINATES */}
-            <div className="bg-white border border-[#4A0E1B]/10 p-6 md:p-8 shadow-sm">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
-                <h2 className="font-cormorant text-2xl md:text-3xl text-[#4A0E1B] flex items-center gap-3">
-                  <MapPin size={24} className="text-[#C9A24B]" />
-                  Delivery Location Pinpoint
+            <div className="bg-[#FFFDF9] border border-[#E5D7B7] rounded-2xl p-6 md:p-8 shadow-sm">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-2">
+                <h2 className="font-cormorant text-3xl md:text-4xl text-[#4A0E1B] flex items-center gap-3">
+                  <MapPin size={28} className="text-[#9B783E]" />
+                  Delivery Location
                 </h2>
-                <span className="font-jost text-[10px] tracking-widest uppercase bg-[#FDFBF4] border border-[#C9A24B]/30 text-[#4A0E1B] px-2.5 py-1 rounded-sm w-fit">
-                  Google Maps Pinpoint
-                </span>
+                <div className="flex items-center gap-2 border border-[#C9A24B]/50 bg-[#FDFBF4] text-[#9B783E] px-3.5 py-1.5 rounded-md font-jost text-[10px] tracking-[0.15em] uppercase font-semibold w-fit shadow-xs">
+                  <Map size={14} className="text-[#C9A24B]" />
+                  <span>GOOGLE MAPS PINPOINT</span>
+                </div>
               </div>
-              <p className="font-jost text-xs text-[#7A6A5C] mb-5">
+              <p className="font-jost text-xs sm:text-sm text-[#7A6A5C] mb-6 leading-relaxed">
                 Pin your exact doorstep, building gate, or landmark on Google Maps. These precise coordinates and instructions are routed directly to our secure courier team.
               </p>
 
@@ -313,7 +379,8 @@ export default function CheckoutPage() {
                 onLandmarkChange={(newLandmark) => {
                   setFormData(prev => ({ ...prev, landmark: newLandmark }));
                 }}
-                height="300px"
+                addressDetails={[formData.address, formData.city, formData.state, formData.pincode].filter(Boolean).join(", ")}
+                height="400px"
               />
             </div>
 
@@ -329,67 +396,68 @@ export default function CheckoutPage() {
                 All online third-party payment gateways have been decommissioned. Choose between in-person cash settlement or direct verified bank transfer/UPI.
               </p>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
-                {/* Method A: Cash */}
-                <label className={`relative flex flex-col p-5 border-2 rounded-lg cursor-pointer transition-all ${
-                  formData.payment === "cash" 
-                    ? "border-[#C9A24B] bg-[#FDFBF4] shadow-sm" 
-                    : "border-gray-200 bg-white hover:border-[#C9A24B]/60"
-                }`}>
-                  <input 
-                    type="radio" 
-                    name="payment" 
-                    value="cash" 
-                    checked={formData.payment === "cash"} 
-                    onChange={handleChange} 
-                    className="sr-only" 
-                  />
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-2xl">💵</span>
-                    <span className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${formData.payment === "cash" ? "border-[#C9A24B] bg-[#C9A24B]" : "border-gray-300"}`}>
-                      {formData.payment === "cash" && <span className="w-1.5 h-1.5 bg-white rounded-full"></span>}
+              <fieldset className="border-0 p-0 m-0">
+                <legend className="sr-only">Choose Payment Method</legend>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
+                  {/* Method A: Cash */}
+                  <label className={`relative flex flex-col p-5 border-2 rounded-lg cursor-pointer transition-all focus-within:ring-2 focus-within:ring-[#C9A24B] ${formData.payment === "cash"
+                      ? "border-[#C9A24B] bg-[#FDFBF4] shadow-sm"
+                      : "border-gray-200 bg-white hover:border-[#C9A24B]/60"
+                    }`}>
+                    <input
+                      type="radio"
+                      name="payment"
+                      value="cash"
+                      checked={formData.payment === "cash"}
+                      onChange={handleChange}
+                      className="sr-only"
+                    />
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-2xl">💵</span>
+                      <span className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${formData.payment === "cash" ? "border-[#C9A24B] bg-[#C9A24B]" : "border-gray-300"}`}>
+                        {formData.payment === "cash" && <span className="w-1.5 h-1.5 bg-white rounded-full"></span>}
+                      </span>
+                    </div>
+                    <span className="font-jost text-sm font-semibold text-[#4A0E1B]">Cash / Pay at Boutique</span>
+                    <span className="font-jost text-xs text-[#7A6A5C] mt-1">
+                      Pay in cash upon in-store collection or cash on delivery where supported.
                     </span>
-                  </div>
-                  <span className="font-jost text-sm font-semibold text-[#4A0E1B]">Cash / Pay at Boutique</span>
-                  <span className="font-jost text-xs text-[#7A6A5C] mt-1">
-                    Pay in cash upon in-store collection or cash on delivery where supported.
-                  </span>
-                  <div className="mt-3 pt-3 border-t border-gray-100 flex items-center gap-1.5 text-[11px] text-amber-700 font-jost">
-                    <AlertCircle size={13} className="shrink-0" />
-                    <span>Payment verified by admin upon receipt.</span>
-                  </div>
-                </label>
+                    <div className="mt-3 pt-3 border-t border-gray-100 flex items-center gap-1.5 text-[11px] text-amber-700 font-jost">
+                      <AlertCircle size={13} className="shrink-0" />
+                      <span>Payment verified by admin upon receipt.</span>
+                    </div>
+                  </label>
 
-                {/* Method B: Bank Transfer / UPI */}
-                <label className={`relative flex flex-col p-5 border-2 rounded-lg cursor-pointer transition-all ${
-                  formData.payment === "bank_transfer" 
-                    ? "border-[#C9A24B] bg-[#FDFBF4] shadow-sm" 
-                    : "border-gray-200 bg-white hover:border-[#C9A24B]/60"
-                }`}>
-                  <input 
-                    type="radio" 
-                    name="payment" 
-                    value="bank_transfer" 
-                    checked={formData.payment === "bank_transfer"} 
-                    onChange={handleChange} 
-                    className="sr-only" 
-                  />
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-2xl">🏦</span>
-                    <span className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${formData.payment === "bank_transfer" ? "border-[#C9A24B] bg-[#C9A24B]" : "border-gray-300"}`}>
-                      {formData.payment === "bank_transfer" && <span className="w-1.5 h-1.5 bg-white rounded-full"></span>}
+                  {/* Method B: Bank Transfer / UPI */}
+                  <label className={`relative flex flex-col p-5 border-2 rounded-lg cursor-pointer transition-all focus-within:ring-2 focus-within:ring-[#C9A24B] ${formData.payment === "bank_transfer"
+                      ? "border-[#C9A24B] bg-[#FDFBF4] shadow-sm"
+                      : "border-gray-200 bg-white hover:border-[#C9A24B]/60"
+                    }`}>
+                    <input
+                      type="radio"
+                      name="payment"
+                      value="bank_transfer"
+                      checked={formData.payment === "bank_transfer"}
+                      onChange={handleChange}
+                      className="sr-only"
+                    />
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-2xl">🏦</span>
+                      <span className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${formData.payment === "bank_transfer" ? "border-[#C9A24B] bg-[#C9A24B]" : "border-gray-300"}`}>
+                        {formData.payment === "bank_transfer" && <span className="w-1.5 h-1.5 bg-white rounded-full"></span>}
+                      </span>
+                    </div>
+                    <span className="font-jost text-sm font-semibold text-[#4A0E1B]">Bank Transfer / External UPI</span>
+                    <span className="font-jost text-xs text-[#7A6A5C] mt-1">
+                      Direct transfer via NEFT, RTGS, IMPS, or UPI (GPay, PhonePe, Paytm).
                     </span>
-                  </div>
-                  <span className="font-jost text-sm font-semibold text-[#4A0E1B]">Bank Transfer / External UPI</span>
-                  <span className="font-jost text-xs text-[#7A6A5C] mt-1">
-                    Direct transfer via NEFT, RTGS, IMPS, or UPI (GPay, PhonePe, Paytm).
-                  </span>
-                  <div className="mt-3 pt-3 border-t border-gray-100 flex items-center gap-1.5 text-[11px] text-amber-700 font-jost">
-                    <AlertCircle size={13} className="shrink-0" />
-                    <span>Admin uploads evidence & confirms funds.</span>
-                  </div>
-                </label>
-              </div>
+                    <div className="mt-3 pt-3 border-t border-gray-100 flex items-center gap-1.5 text-[11px] text-amber-700 font-jost">
+                      <AlertCircle size={13} className="shrink-0" />
+                      <span>Admin uploads evidence &amp; confirms funds.</span>
+                    </div>
+                  </label>
+                </div>
+              </fieldset>
 
               {/* Bank Details Display when Bank Transfer is selected */}
               {formData.payment === "bank_transfer" && (
@@ -427,6 +495,26 @@ export default function CheckoutPage() {
                       </span>
                     </div>
                   </div>
+
+                  {/* Customer Payment Reference / UTR Input */}
+                  <div className="mt-4 pt-3 border-t border-[#C9A24B]/30">
+                    <label htmlFor="checkout-payment-ref" className="block font-jost text-[10px] uppercase tracking-wider text-[#7A6A5C] mb-1 font-semibold">
+                      Transaction Reference / UTR Number (Optional)
+                    </label>
+                    <input
+                      type="text"
+                      id="checkout-payment-ref"
+                      name="paymentReference"
+                      value={formData.paymentReference}
+                      onChange={handleChange}
+                      placeholder="e.g. UTR / UPI Ref: 329849201928"
+                      className="w-full bg-white border border-[#C9A24B]/40 focus:border-[#C9A24B] px-3 py-2 font-mono text-xs text-[#4A0E1B] outline-none rounded-sm"
+                    />
+                    <p className="mt-1 text-[10px] text-[#7A6A5C] font-jost">
+                      If you have already initiated the transfer via Bank/UPI app, paste your transaction reference or UTR here to accelerate verification.
+                    </p>
+                  </div>
+
                   <p className="mt-3 text-[11px] text-[#7A6A5C] font-jost italic">
                     💡 Please include your phone number in the transaction remarks. Once placed, an administrator will verify the credit in our account and update your payment status.
                   </p>
@@ -440,12 +528,14 @@ export default function CheckoutPage() {
                 <Truck size={24} className="text-[#C9A24B]" />
                 Special Delivery Notes
               </h2>
-              <textarea 
-                name="notes" 
-                rows={2} 
-                value={formData.notes} 
-                onChange={handleChange} 
-                className="w-full bg-white border border-[#4A0E1B]/20 focus:border-[#C9A24B] px-4 py-3 font-jost text-sm text-[#4A0E1B] outline-none transition-colors resize-none" 
+              <label htmlFor="checkout-notes" className="sr-only">Special Delivery Notes</label>
+              <textarea
+                id="checkout-notes"
+                name="notes"
+                rows={2}
+                value={formData.notes}
+                onChange={handleChange}
+                className="w-full bg-white border border-[#4A0E1B]/20 focus:border-[#C9A24B] px-4 py-3 font-jost text-sm text-[#4A0E1B] outline-none transition-colors resize-none"
                 placeholder="Any special timing, gifting message, or delivery instructions..."
               />
             </div>
@@ -457,6 +547,17 @@ export default function CheckoutPage() {
             >
               {isProcessing ? "PROCESSING ORDER..." : `PLACE ORDER (₹${total.toLocaleString('en-IN')})`}
             </button>
+
+            {/* Policy & Trust Links under Submit Button */}
+            <div className="pt-2 flex flex-wrap justify-center gap-x-3 gap-y-1 text-[11px] font-jost text-[#7A6A5C]">
+              <Link to="/shipping" target="_blank" className="hover:text-[#C9A24B] underline underline-offset-2">Shipping Policy</Link>
+              <span>&middot;</span>
+              <Link to="/refund" target="_blank" className="hover:text-[#C9A24B] underline underline-offset-2">Return &amp; Refund Policy</Link>
+              <span>&middot;</span>
+              <Link to="/privacy" target="_blank" className="hover:text-[#C9A24B] underline underline-offset-2">Privacy Policy</Link>
+              <span>&middot;</span>
+              <Link to="/terms" target="_blank" className="hover:text-[#C9A24B] underline underline-offset-2">Terms of Service</Link>
+            </div>
           </form>
         </div>
 

@@ -216,6 +216,16 @@ router.post('/login', authLimiter, validate(loginSchema), async (req, res) => {
           city: user.city,
           state: user.state,
           pincode: user.pincode,
+          dob: user.dob || "",
+          gender: user.gender || "",
+          avatar: user.avatar || "",
+          addresses: user.addresses || [],
+          notifications: user.notifications || {
+            orderUpdates: true,
+            whatsappAlerts: true,
+            privilegeOffers: true,
+            newsletter: false
+          },
           role,
           token
         }
@@ -256,7 +266,7 @@ router.get('/me', protect, async (req, res) => {
 });
 
 // @route   PUT /api/users/:id
-// @desc    Update user profile & saved address (BOLA FIXED: User can only update own account; non-admins cannot change role)
+// @desc    Update user profile, password, addresses & settings (BOLA FIXED)
 router.put('/:id', protect, async (req, res) => {
   try {
     // Enforce Authorization check
@@ -272,6 +282,23 @@ router.put('/:id', protect, async (req, res) => {
       return res.status(404).json({ success: false, message: "User not found" });
     }
 
+    // Password change with security verification
+    if (req.body.password) {
+      if (!isAdmin) {
+        if (!req.body.currentPassword) {
+          return res.status(400).json({ success: false, message: "Current password is required to change password" });
+        }
+        const isMatch = await user.matchPassword(req.body.currentPassword);
+        if (!isMatch) {
+          return res.status(400).json({ success: false, message: "Incorrect current password" });
+        }
+      }
+      if (typeof req.body.password !== 'string' || req.body.password.length < 6) {
+        return res.status(400).json({ success: false, message: "New password must be at least 6 characters long" });
+      }
+      user.password = req.body.password; // Triggers userSchema.pre('save') bcrypt hashing
+    }
+
     // Permitted user fields
     if (req.body.name) user.name = req.body.name.trim();
     if (req.body.phone) user.phone = req.body.phone.trim();
@@ -279,6 +306,25 @@ router.put('/:id', protect, async (req, res) => {
     if (req.body.city !== undefined) user.city = req.body.city;
     if (req.body.state !== undefined) user.state = req.body.state;
     if (req.body.pincode !== undefined) user.pincode = req.body.pincode;
+    if (req.body.dob !== undefined) user.dob = req.body.dob;
+    if (req.body.gender !== undefined) user.gender = req.body.gender;
+    if (req.body.avatar !== undefined) user.avatar = req.body.avatar;
+
+    if (Array.isArray(req.body.addresses)) {
+      user.addresses = req.body.addresses.map(addr => ({
+        ...addr,
+        _id: addr._id || new mongoose.Types.ObjectId().toString()
+      }));
+    }
+
+    if (req.body.notifications && typeof req.body.notifications === 'object') {
+      user.notifications = {
+        orderUpdates: req.body.notifications.orderUpdates ?? user.notifications?.orderUpdates ?? true,
+        whatsappAlerts: req.body.notifications.whatsappAlerts ?? user.notifications?.whatsappAlerts ?? true,
+        privilegeOffers: req.body.notifications.privilegeOffers ?? user.notifications?.privilegeOffers ?? true,
+        newsletter: req.body.notifications.newsletter ?? user.notifications?.newsletter ?? false
+      };
+    }
 
     // Only administrators can change role or status
     if (isAdmin) {
@@ -297,22 +343,30 @@ router.put('/:id', protect, async (req, res) => {
       await Customer.findByIdAndUpdate(updatedUser._id, {
         name: updatedUser.name,
         phone: updatedUser.phone,
+        password: updatedUser.password,
         address: updatedUser.address,
         city: updatedUser.city,
         state: updatedUser.state,
         pincode: updatedUser.pincode,
+        dob: updatedUser.dob,
+        gender: updatedUser.gender,
+        avatar: updatedUser.avatar,
+        addresses: updatedUser.addresses,
+        notifications: updatedUser.notifications,
         status: updatedUser.status
-      }).catch(() => null);
+      }).catch((err) => console.warn("Customer mirror update error:", err.message));
     } else if (updatedUser.role === 'admin') {
       await Admin.findByIdAndUpdate(updatedUser._id, {
         name: updatedUser.name,
         phone: updatedUser.phone,
+        password: updatedUser.password,
         status: updatedUser.status
       }).catch(() => null);
     }
 
     res.status(200).json({
       success: true,
+      message: "Profile updated successfully",
       data: {
         _id: updatedUser._id,
         name: updatedUser.name,
@@ -322,13 +376,18 @@ router.put('/:id', protect, async (req, res) => {
         city: updatedUser.city,
         state: updatedUser.state,
         pincode: updatedUser.pincode,
+        dob: updatedUser.dob || "",
+        gender: updatedUser.gender || "",
+        avatar: updatedUser.avatar || "",
+        addresses: updatedUser.addresses || [],
+        notifications: updatedUser.notifications || {},
         role: updatedUser.role,
         status: updatedUser.status
       }
     });
   } catch (error) {
     console.error("Profile update error:", error.message);
-    res.status(500).json({ success: false, message: "Failed to update profile" });
+    res.status(500).json({ success: false, message: error.message || "Failed to update profile" });
   }
 });
 

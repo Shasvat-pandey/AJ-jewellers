@@ -10,6 +10,26 @@ const userSchema = new mongoose.Schema({
   city: { type: String, default: "" },
   state: { type: String, default: "" },
   pincode: { type: String, default: "" },
+  dob: { type: String, default: "" },
+  gender: { type: String, default: "" },
+  avatar: { type: String, default: "" },
+  addresses: [{
+    _id: { type: String, default: () => new mongoose.Types.ObjectId().toString() },
+    tag: { type: String, default: "Home" },
+    isDefault: { type: Boolean, default: false },
+    name: { type: String, default: "" },
+    phone: { type: String, default: "" },
+    addressLine: { type: String, default: "" },
+    city: { type: String, default: "" },
+    state: { type: String, default: "" },
+    pincode: { type: String, default: "" }
+  }],
+  notifications: {
+    orderUpdates: { type: Boolean, default: true },
+    whatsappAlerts: { type: Boolean, default: true },
+    privilegeOffers: { type: Boolean, default: true },
+    newsletter: { type: Boolean, default: false }
+  },
   role: { type: String, enum: ['customer', 'admin'], default: 'customer' },
   status: { type: String, enum: ['Active', 'Suspended'], default: 'Active' }
 }, { 

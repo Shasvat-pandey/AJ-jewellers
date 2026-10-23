@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { Check, Truck, CreditCard, MapPin, Phone, Mail, Navigation } from "lucide-react";
+import { Check, Truck, CreditCard, MapPin, Phone, Mail, Navigation, Download } from "lucide-react";
 import { API_URL, getAuthToken } from "../../../../utils/api";
 
 interface OrderItem {
@@ -126,6 +126,17 @@ export default function OrderConfirmedPage() {
 
   const shortId = `AJ-${order._id.slice(-6).toUpperCase()}`;
 
+  const handleDownloadInvoice = () => {
+    if (!order) return;
+    const token = getAuthToken();
+    const link = document.createElement('a');
+    link.href = `${API_URL}/orders/${order._id}/invoice${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+    link.download = `Invoice-${shortId}.pdf`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   return (
     <div className="bg-[#FDFBF4] min-h-screen pt-36 md:pt-48 pb-24 px-6 animate-in fade-in duration-500">
       <div className="max-w-3xl mx-auto w-full">
@@ -150,11 +161,21 @@ export default function OrderConfirmedPage() {
               <p className="font-jost text-[10px] tracking-[0.15em] text-[#7A6A5C] uppercase mb-1">Order Reference</p>
               <p className="font-cormorant text-3xl md:text-4xl text-[#4A0E1B] font-semibold tracking-wide">{shortId}</p>
             </div>
-            <div className="flex items-center gap-3 text-[#C9A24B]">
-              <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-              <span className="font-jost text-sm font-medium uppercase tracking-wider bg-green-50 text-green-700 px-3 py-1 border border-green-200 rounded-sm">
-                {order.orderStatus}
-              </span>
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                <span className="font-jost text-sm font-medium uppercase tracking-wider bg-green-50 text-green-700 px-3 py-1 border border-green-200 rounded-sm">
+                  {order.orderStatus}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={handleDownloadInvoice}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#4A0E1B] text-[#F3E9D8] hover:bg-[#3B0A14] font-jost text-xs tracking-wider uppercase rounded-sm transition-colors cursor-pointer shadow-sm"
+              >
+                <Download size={13} />
+                Invoice PDF
+              </button>
             </div>
           </div>
 
@@ -231,29 +252,40 @@ export default function OrderConfirmedPage() {
           </div>
           
           <div className="divide-y divide-[#EAE3D5]">
-            {order.items.map((item, idx) => (
-              <div key={idx} className="p-4 md:p-6 flex flex-col md:flex-row gap-4 md:items-center">
-                <div className="w-20 h-20 md:w-24 md:h-24 bg-[#FDFBF4] border border-[#C9A24B]/20 rounded-sm overflow-hidden shrink-0 flex items-center justify-center p-2">
-                  <img 
-                    src={item.image || "/placeholder.jpg"} 
-                    alt={item.name} 
-                    className="w-full h-full object-contain" 
-                  />
-                </div>
-                <div className="flex-1 min-w-0 md:flex md:items-center md:justify-between">
-                  <div>
-                    <h3 className="font-cormorant text-lg md:text-xl text-[#4A0E1B] truncate">{item.name}</h3>
-                    <p className="font-jost text-[11px] md:text-xs text-[#7A6A5C] uppercase tracking-wider mt-1">
-                      {item.specs} &middot; Qty: {item.quantity}
-                    </p>
+            {order.items.map((item, idx) => {
+              const productId = (item as any).product?._id || (item as any).product || (item as any).productId || item._id;
+              return (
+                <div key={idx} className="p-4 md:p-6 flex flex-col md:flex-row gap-4 md:items-center">
+                  <Link 
+                    to={productId ? `/products/${productId}` : "#"}
+                    className="w-20 h-20 md:w-24 md:h-24 bg-[#FDFBF4] border border-[#C9A24B]/20 hover:border-[#C9A24B] rounded-sm overflow-hidden shrink-0 flex items-center justify-center p-2 group transition-all"
+                  >
+                    <img 
+                      src={item.image || "/placeholder.jpg"} 
+                      alt={item.name} 
+                      className="w-full h-full object-contain group-hover:scale-105 transition-transform duration-300" 
+                    />
+                  </Link>
+                  <div className="flex-1 min-w-0 md:flex md:items-center md:justify-between">
+                    <div>
+                      <Link 
+                        to={productId ? `/products/${productId}` : "#"}
+                        className="font-cormorant text-lg md:text-xl text-[#4A0E1B] hover:text-[#8C6514] truncate block transition-colors"
+                      >
+                        {item.name}
+                      </Link>
+                      <p className="font-jost text-[11px] md:text-xs text-[#7A6A5C] uppercase tracking-wider mt-1">
+                        {item.specs} &middot; Qty: {item.quantity}
+                      </p>
+                    </div>
+                    <div className="text-right mt-2 md:mt-0 md:ml-4">
+                      <p className="font-medium text-[#4A0E1B]">₹{formatINR(item.price * item.quantity)}</p>
+                      <p className="font-jost text-[10px] text-[#7A6A5C] mt-0.5">₹{formatINR(item.price)} each</p>
+                    </div>
                   </div>
-                  <div className="text-right mt-2 md:mt-0 md:ml-4">
-                    <p className="font-medium text-[#4A0E1B]">₹{formatINR(item.price * item.quantity)}</p>
-                    <p className="font-jost text-[10px] text-[#7A6A5C] mt-0.5">₹{formatINR(item.price)} each</p>
-                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           {/* Order Total */}
@@ -288,13 +320,23 @@ export default function OrderConfirmedPage() {
           </ul>
         </div>
 
-        <Link
-          to="/"
-          onClick={() => window.scrollTo(0, 0)}
-          className="inline-block border border-[#C9A24B]/50 text-[#4A0E1B] font-jost text-[10px] md:text-xs tracking-[0.2em] uppercase px-10 py-4 hover:bg-[#C9A24B] hover:text-[#FDFBF4] transition-colors shadow-sm mt-8 block text-center"
-        >
-          CONTINUE SHOPPING
-        </Link>
+        <div className="flex flex-col sm:flex-row gap-4 justify-center items-center mt-8">
+          <button
+            type="button"
+            onClick={handleDownloadInvoice}
+            className="w-full sm:w-auto bg-[#4A0E1B] text-[#F3E9D8] font-jost text-[10px] md:text-xs tracking-[0.2em] uppercase px-8 py-4 hover:bg-[#3B0A14] transition-colors shadow-sm flex items-center justify-center gap-2 cursor-pointer"
+          >
+            <Download size={14} />
+            DOWNLOAD INVOICE (PDF)
+          </button>
+          <Link
+            to="/"
+            onClick={() => window.scrollTo(0, 0)}
+            className="w-full sm:w-auto border border-[#C9A24B]/50 text-[#4A0E1B] font-jost text-[10px] md:text-xs tracking-[0.2em] uppercase px-10 py-4 hover:bg-[#C9A24B] hover:text-[#FDFBF4] transition-colors shadow-sm text-center"
+          >
+            CONTINUE SHOPPING
+          </Link>
+        </div>
       </div>
     </div>
   );

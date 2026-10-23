@@ -15,6 +15,7 @@ export default function BagPage() {
   // 2. SYNC: Save to browser storage automatically whenever bagItems changes
   useEffect(() => {
     localStorage.setItem("aj_cart", JSON.stringify(bagItems));
+    window.dispatchEvent(new Event("cart_updated"));
   }, [bagItems]);
 
   // 3. ACTIONS: Update quantity & Remove items
@@ -37,7 +38,8 @@ export default function BagPage() {
     return total + (itemTotal - (itemTotal / (1 + itemGstPercent / 100)));
   }, 0);
   const subtotalBeforeGst = cartTotal - gstAmount;
-  const grandTotal = cartTotal;
+  const shipping = cartTotal > 50000 ? 0 : 150;
+  const grandTotal = cartTotal + shipping;
 
   // Currency Formatter Helper
   const formatINR = (amount: number) => {
@@ -84,16 +86,22 @@ export default function BagPage() {
             <div className="space-y-8 md:space-y-10">
               {bagItems.map((item) => (
                 <div key={`${item._id}-${item.variantId || "base"}`} className="flex gap-6 md:gap-8 pb-8 md:pb-10 border-b border-[#EAE3D5]">
-                  <div className="w-24 h-24 md:w-32 md:h-32 shrink-0 bg-[#4A0E1B]/5 p-2 flex items-center justify-center">
+                  <Link 
+                    to={`/products/${item._id}`}
+                    className="w-24 h-24 md:w-32 md:h-32 shrink-0 bg-[#4A0E1B]/5 p-2 flex items-center justify-center group"
+                  >
                     {/* Updated to use object-contain so it doesn't crop */}
-                    <img src={item.image} alt={item.name} className="w-full h-full object-contain" />
-                  </div>
+                    <img src={item.image} alt={item.name} className="w-full h-full object-contain group-hover:scale-105 transition-transform duration-300" />
+                  </Link>
                   
                   <div className="flex flex-col flex-1">
                     <div className="flex justify-between items-start mb-2">
-                      <h3 className="font-cormorant text-xl md:text-2xl text-[#4A0E1B]">
+                      <Link 
+                        to={`/products/${item._id}`}
+                        className="font-cormorant text-xl md:text-2xl text-[#4A0E1B] hover:text-[#8C6514] transition-colors"
+                      >
                         {item.name}
-                      </h3>
+                      </Link>
                       <span className="font-jost text-sm md:text-base text-[#4A0E1B] font-medium">
                         ₹{formatINR(item.price * item.quantity)}
                       </span>
@@ -142,8 +150,15 @@ export default function BagPage() {
               </div>
               <div className="flex justify-between text-[#7A6A5C]">
                 <span>Insured delivery</span>
-                <span className="text-[#4A0E1B] font-medium">Free</span>
+                <span className="text-[#4A0E1B] font-medium">
+                  {shipping === 0 ? "FREE" : `₹${formatINR(shipping)}`}
+                </span>
               </div>
+              {shipping > 0 && (
+                <p className="text-[11px] text-[#C9A24B] italic text-right">
+                  Free insured delivery on orders above ₹50,000
+                </p>
+              )}
             </div>
 
             <div className="flex justify-between items-baseline mt-8 pt-8 border-t border-[#EAE3D5] mb-10">

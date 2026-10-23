@@ -98,6 +98,7 @@ function App() {
             <Route path="/login" element={<LoginPage />} />
             <Route path="/signup" element={<SignupPage />} />
             <Route path="/account" element={<AccountPage />} />
+            <Route path="/profile" element={<Navigate to="/account" replace />} />
             <Route path="/care-guide" element={<CareGuidePage />} />
 
             {/* FT-10: Policy & Legal Routes */}

@@ -60,6 +60,7 @@ const orderSchema = z.object({
       quantity: z.number().int().positive("Quantity must be at least 1")
     })).min(1, "At least one item is required in the order"),
     paymentMethod: z.string().min(1, "Payment method is required"),
+    paymentReference: z.string().trim().max(100).optional().default(''),
     lockedGoldRate: z.number().positive().optional(),
     lockedGoldRateTimestamp: z.string().optional()
   })
