@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { FaClock } from "react-icons/fa";
 import { API_URL } from "../../utils/api";
+import CountingRate from "./CountingRate";
 
 export default function GoldRateBanner() {
   const [rates, setRates] = useState({
@@ -64,7 +65,7 @@ export default function GoldRateBanner() {
         {/* 24K GOLD */}
         <div className="flex flex-col items-center">
           <p className="font-cormorant text-3xl md:text-5xl text-[#F3E9D8]">
-            {formatINR(rates.rate24k)}
+            <CountingRate value={rates.rate24k} formatter={formatINR} duration={1600} />
           </p>
           <p className="font-jost text-[10px] md:text-xs tracking-[0.16em] text-[#E7C9B8]/80 mt-2">
             24K / GRAM
@@ -77,7 +78,7 @@ export default function GoldRateBanner() {
         {/* 22K GOLD */}
         <div className="flex flex-col items-center">
           <p className="font-cormorant text-3xl md:text-5xl text-[#F3E9D8]">
-            {formatINR(rates.rate22k)}
+            <CountingRate value={rates.rate22k} formatter={formatINR} duration={1600} />
           </p>
           <p className="font-jost text-[10px] md:text-xs tracking-[0.16em] text-[#E7C9B8]/80 mt-2">
             22K / GRAM
@@ -90,7 +91,7 @@ export default function GoldRateBanner() {
         {/* 18K GOLD */}
         <div className="flex flex-col items-center">
           <p className="font-cormorant text-3xl md:text-5xl text-[#F3E9D8]">
-            {formatINR(rates.rate18k)}
+            <CountingRate value={rates.rate18k} formatter={formatINR} duration={1600} />
           </p>
           <p className="font-jost text-[10px] md:text-xs tracking-[0.16em] text-[#E7C9B8]/80 mt-2">
             18K / GRAM
@@ -103,7 +104,7 @@ export default function GoldRateBanner() {
         {/* SILVER */}
         <div className="flex flex-col items-center">
           <p className="font-cormorant text-3xl md:text-5xl text-[#F3E9D8]">
-            {formatINR(rates.silver)}
+            <CountingRate value={rates.silver} formatter={formatINR} duration={1600} />
           </p>
           <p className="font-jost text-[10px] md:text-xs tracking-[0.16em] text-[#E7C9B8]/80 mt-2">
             SILVER / GRAM

@@ -10,7 +10,7 @@ import { API_URL } from "../../../../utils/api";
 export default function EverydayGoldPage() {
   const [wishlisted, setWishlisted] = useState<Set<string>>(new Set());
   const { showToast } = useToast();
-  
+
   // --- LIVE DATA STATES ---
   const [products, setProducts] = useState<any[]>([]);
   const [marketRates, setMarketRates] = useState<any>(null);
@@ -36,7 +36,7 @@ export default function EverydayGoldPage() {
         // 2. Fetch All Products
         const productsRes = await fetch(`${API_URL}/products`, { credentials: 'include' });
         const productsData = await productsRes.json();
-        
+
         if (productsData.success) {
           // Filter ONLY products where the collection was set to "Everyday Wear" in the Admin panel
           const everydayProducts = productsData.data.filter(
@@ -67,11 +67,11 @@ export default function EverydayGoldPage() {
     const metalValue = metalRate * (Number(item.weight) || 0);
     const diamondValue = Number(item.diamondValue) || 0;
     const makingChargesAmt = metalValue * ((Number(item.makingCharges) || 0) / 100);
-    
+
     const preGstTotal = metalValue + diamondValue + makingChargesAmt;
     const gstPercent = item.gst !== undefined && item.gst !== null ? Number(item.gst) : 3;
     const gstAmount = preGstTotal * (gstPercent / 100);
-    
+
     return preGstTotal + gstAmount;
   };
 
@@ -86,7 +86,7 @@ export default function EverydayGoldPage() {
 
   // --- FIX 2: SAVE WISHLIST TO LOCAL STORAGE WHEN CLICKED ---
   const toggleWishlist = (e: React.MouseEvent, id: string) => {
-    e.preventDefault(); 
+    e.preventDefault();
     e.stopPropagation();
 
     // Grab existing wishlist from local storage
@@ -111,20 +111,20 @@ export default function EverydayGoldPage() {
 
   // --- ADD TO CART FUNCTION ---
   const handleAddToCart = (e: React.MouseEvent, product: any, finalPrice: number) => {
-    e.preventDefault(); 
+    e.preventDefault();
     e.stopPropagation();
 
     const cartItem = {
       _id: product._id,
       name: product.name,
       specs: `${product.purity} / ${product.weight}g`,
-      price: finalPrice, 
+      price: finalPrice,
       image: getImageUrl(product.images[0]),
       quantity: 1,
     };
 
     const existingCart = JSON.parse(localStorage.getItem("aj_cart") || "[]");
-    
+
     const existingItemIndex = existingCart.findIndex((item: any) => item._id === cartItem._id);
     if (existingItemIndex >= 0) {
       existingCart[existingItemIndex].quantity += 1;
@@ -146,14 +146,14 @@ export default function EverydayGoldPage() {
 
   return (
     <div className="bg-[#FDFBF4] min-h-screen pt-28 md:pt-36 pb-24 px-4 sm:px-6 md:px-12 lg:px-20">
-      
+
       {/* --- HEADER SECTION --- */}
       <div className="text-center max-w-2xl mx-auto mb-10 md:mb-14">
         <p className="font-jost text-[9px] md:text-[10px] tracking-[0.24em] text-[#C9A24B] uppercase mb-3 font-semibold">
           Collection
         </p>
         <h1 className="font-cormorant text-4xl md:text-5xl lg:text-6xl text-[#4A0E1B] mb-4">
-          Everyday Gold
+          Everyday Silver & Gold
         </h1>
         <div className="w-12 md:w-16 h-[1px] bg-[#C9A24B] mx-auto mb-5" />
         <p className="font-jost text-sm md:text-base text-[#7A6A5C] leading-relaxed px-4">
@@ -192,10 +192,10 @@ export default function EverydayGoldPage() {
             const finalPrice = calculatePrice(product);
 
             return (
-              <Link 
-                to={`/products/${product._id}`} 
-                key={product._id} 
-                onClick={() => window.scrollTo(0, 0)} 
+              <Link
+                to={`/products/${product._id}`}
+                key={product._id}
+                onClick={() => window.scrollTo(0, 0)}
                 className="group cursor-pointer flex flex-col"
               >
                 {/* Image Box — fixed square well, photo never stretched/cropped */}
@@ -206,24 +206,24 @@ export default function EverydayGoldPage() {
                     ratio="square"
                     imgClassName="transition-transform duration-700 group-hover:scale-105"
                   />
-                  
+
                   {product.isNew && (
                     <div className="absolute top-0 left-0 bg-[#3F0106] text-[#C9A24B] font-jost text-[8px] md:text-[10px] tracking-[0.2em] px-2 py-1 md:px-3 md:py-1.5 uppercase z-10">
                       NEW
                     </div>
                   )}
-                  
+
                   {/* FIX 3: EXACT SAME HEART LOGIC/STYLES AS BRIDAL VAULT */}
                   <button
                     onClick={(e) => toggleWishlist(e, product._id)}
                     aria-label={isWishlisted ? "Remove from wishlist" : "Add to wishlist"}
                     className="absolute top-2 right-2 md:top-3 md:right-3 bg-white/90 p-1.5 md:p-2 rounded-full text-[#4A0E1B] hover:text-[#C9A24B] hover:bg-white transition-colors z-10 shadow-sm"
                   >
-                    <Heart 
-                      size={16} 
-                      strokeWidth={1.5} 
-                      fill={isWishlisted ? "currentColor" : "none"} 
-                      className={isWishlisted ? "text-[#4A0E1B]" : "md:w-5 md:h-5"} 
+                    <Heart
+                      size={16}
+                      strokeWidth={1.5}
+                      fill={isWishlisted ? "currentColor" : "none"}
+                      className={isWishlisted ? "text-[#4A0E1B]" : "md:w-5 md:h-5"}
                     />
                   </button>
                 </div>
@@ -238,9 +238,9 @@ export default function EverydayGoldPage() {
                       ₹{formatINR(finalPrice)}
                     </p>
                   </div>
-                  
+
                   {/* Add to Bag Button */}
-                  <button 
+                  <button
                     onClick={(e) => handleAddToCart(e, product, finalPrice)}
                     className="flex items-center gap-1.5 text-[#4A0E1B] hover:text-[#C9A24B] transition-colors mt-0.5 md:mt-1 shrink-0 bg-[#C9A24B]/10 px-3 py-1.5 rounded-sm"
                   >

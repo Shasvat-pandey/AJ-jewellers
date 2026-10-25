@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { FaClock } from "react-icons/fa";
 import { API_URL } from "../../../../utils/api";
+import CountingRate from "../../../Common/CountingRate";
 
 export default function GoldRatePage() {
   // --- LIVE DATA STATES ---
@@ -104,7 +105,7 @@ export default function GoldRatePage() {
             className="bg-[#4A0E1B] py-8 px-4 flex flex-col items-center justify-center text-center shadow-md"
           >
             <p className="font-cormorant text-3xl md:text-4xl text-[#F3E9D8] mb-2">
-              {formatINR(rate.price, false)}
+              <CountingRate value={rate.price} formatter={(val) => formatINR(val, false)} duration={1500} />
             </p>
             <p className="font-jost text-[10px] md:text-xs tracking-[0.16em] text-[#C9A24B] uppercase font-medium">
               {rate.name} / {rate.unit}

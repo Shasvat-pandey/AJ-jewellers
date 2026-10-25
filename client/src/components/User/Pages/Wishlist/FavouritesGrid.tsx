@@ -2,11 +2,156 @@ import { useState, useEffect } from "react";
 import { Link } from "react-router-dom"; 
 import { FaHeart, FaRegHeart } from "react-icons/fa";
 import { ShoppingBag } from "lucide-react";
-import { useToast } from "../../../Common/context/ToastContext"; // Adjust path if needed
+import { useToast } from "../../../Common/context/ToastContext";
 import ProductImage from "../../Components/Product/ProductImage";
 import { getImageUrl as resolveImageUrl } from "../../../../utils/imageUrl";
 import { getWishlistItems, saveWishlistItems } from "../../../../utils/wishlist";
 import { API_URL } from "../../../../utils/api";
+import { calculatePrice as calcPrice, formatINR as formatCurrency } from "../../../../utils/price";
+
+interface FavouriteCardProps {
+  product: any;
+  index: number;
+  isWishlisted: boolean;
+  finalPrice: number;
+  formatINR: (amount: number | string | null | undefined) => string;
+  onToggleWishlist: (e: React.MouseEvent, id: string) => void;
+  onAddToCart: (e: React.MouseEvent, product: any, finalPrice: number) => void;
+}
+
+/**
+ * Individual Favourite Card with automated image autoslideshow,
+ * staggered across cards with unique time offsets and intervals so
+ * different cards in different rows change asynchronously.
+ */
+function FavouriteCard({
+  product,
+  index,
+  isWishlisted,
+  finalPrice,
+  formatINR,
+  onToggleWishlist,
+  onAddToCart,
+}: FavouriteCardProps) {
+  // Extract all available image entries
+  const images = Array.isArray(product.images) && product.images.length > 0 
+    ? product.images 
+    : (product.image ? [product.image] : []);
+
+  const [activeImgIndex, setActiveImgIndex] = useState(0);
+  const [isHovered, setIsHovered] = useState(false);
+
+  // Staggered timing per card so different cards and rows change asynchronously
+  useEffect(() => {
+    if (images.length <= 1 || isHovered) return;
+
+    // Distinct interval cadences per card position (ranging from 2.4s to 3.6s)
+    const cadencePatterns = [2600, 3300, 2800, 3500, 2400, 3100, 2900, 3600];
+    const intervalMs = cadencePatterns[index % cadencePatterns.length];
+
+    // Initial stagger offset so cards in different columns/rows don't start together
+    const staggerOffsetMs = (index % 4) * 750;
+
+    let intervalId: any = null;
+
+    // Stagger first transition with initial delay, then loop on card's unique cadence
+    const timeoutId = setTimeout(() => {
+      setActiveImgIndex((prev) => (prev + 1) % images.length);
+
+      intervalId = setInterval(() => {
+        setActiveImgIndex((prev) => (prev + 1) % images.length);
+      }, intervalMs);
+    }, intervalMs + staggerOffsetMs);
+
+    return () => {
+      clearTimeout(timeoutId);
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [images.length, isHovered, index]);
+
+  const currentImage = images[activeImgIndex] || images[0];
+
+  return (
+    <Link
+      to={`/products/${product._id}`}
+      onClick={() => window.scrollTo(0, 0)}
+      className="group block"
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+    >
+      <div className="relative mb-3 md:mb-4 overflow-hidden rounded-sm bg-[#4A0E1B]/5">
+        {product.isNew && (
+          <span className="absolute top-2 left-2 md:top-3 md:left-3 z-10 bg-[#3F0106] text-[#F2DBB6] font-jost text-[9px] md:text-[10px] tracking-[0.12em] font-semibold px-2 py-1">
+            NEW
+          </span>
+        )}
+
+        {/* Wishlist Button */}
+        <button
+          onClick={(e) => onToggleWishlist(e, product._id)}
+          aria-label={isWishlisted ? "Remove from wishlist" : "Add to wishlist"}
+          aria-pressed={isWishlisted}
+          className="absolute top-2 right-2 md:top-3 md:right-3 z-10 w-7 h-7 md:w-8 md:h-8 rounded-full bg-black/30 backdrop-blur-sm flex items-center justify-center transition-colors hover:bg-black/45 cursor-pointer"
+        >
+          {isWishlisted ? (
+            <FaHeart size={13} className="text-[#C9A24B]" />
+          ) : (
+            <FaRegHeart size={13} className="text-white" />
+          )}
+        </button>
+
+        {/* Auto-sliding Image Container with Smooth Crossfade */}
+        <div key={activeImgIndex} className="animate-in fade-in duration-500">
+          <ProductImage
+            image={currentImage}
+            alt={`${product.name} — view ${activeImgIndex + 1}`}
+            ratio="square"
+            imgClassName="transition-transform duration-500 group-hover:scale-105"
+          />
+        </div>
+
+        {/* Subtle Slide Indicator Dots (Only if product has multiple images) */}
+        {images.length > 1 && (
+          <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1 z-10 bg-black/25 backdrop-blur-xs px-2 py-0.5 rounded-full pointer-events-none">
+            {images.map((_: any, idx: number) => (
+              <span
+                key={idx}
+                className={`transition-all duration-300 rounded-full ${
+                  activeImgIndex === idx
+                    ? "w-3 h-1 bg-[#C9A24B]"
+                    : "w-1 h-1 bg-white/60"
+                }`}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Product Details & Add to Bag */}
+      <div className="flex justify-between items-start gap-2">
+        <div className="flex flex-col">
+          <h3 className="font-cormorant text-lg md:text-xl text-[#4A0E1B] leading-tight truncate group-hover:text-[#8C6514] transition-colors">
+            {product.name}
+          </h3>
+          <p className="font-jost text-sm md:text-base text-[#7A6A5C] mt-1">
+            ₹{formatINR(finalPrice)}
+          </p>
+        </div>
+
+        {/* Direct Cart Button */}
+        <button 
+          onClick={(e) => onAddToCart(e, product, finalPrice)}
+          className="flex items-center gap-1.5 text-[#4A0E1B] hover:text-[#C9A24B] transition-colors mt-0.5 md:mt-1 shrink-0 bg-[#C9A24B]/10 px-3 py-1.5 rounded-sm cursor-pointer"
+        >
+          <ShoppingBag size={14} strokeWidth={1.5} className="md:w-4 md:h-4" />
+          <span className="font-jost text-[9px] md:text-xs tracking-[0.15em] uppercase font-medium">
+            Add
+          </span>
+        </button>
+      </div>
+    </Link>
+  );
+}
 
 export default function FavouritesGrid() {
   const [wishlisted, setWishlisted] = useState<Set<string>>(() => {
@@ -37,7 +182,7 @@ export default function FavouritesGrid() {
         const productsData = await productsRes.json();
         
         if (productsData.success) {
-          // Filter ONLY products that are marked as favorites
+          // Filter products that are marked as favorites
           const favoriteProducts = productsData.data.filter((p: any) => p.isFavorite === true || p.isFavorite === "true" || p.subcategory === "Favorite");
           setProducts(favoriteProducts);
         }
@@ -51,34 +196,25 @@ export default function FavouritesGrid() {
     fetchData();
   }, []);
 
+  // Sync wishlist on external storage changes
+  useEffect(() => {
+    const handleStorageChange = () => {
+      setWishlisted(new Set(getWishlistItems()));
+    };
+    window.addEventListener("storage", handleStorageChange);
+    return () => window.removeEventListener("storage", handleStorageChange);
+  }, []);
+
   // --- DYNAMIC PRICING ENGINE ---
   const calculatePrice = (item: any) => {
-    if (!marketRates || !item) return 0;
-
-    let metalRate = 0;
-    if (item.purity === "24K Gold") metalRate = marketRates.rate24k;
-    else if (item.purity === "22K Gold") metalRate = marketRates.rate22k;
-    else if (item.purity === "18K Gold") metalRate = marketRates.rate18k;
-    else if (item.purity === "Silver (925)") metalRate = marketRates.silver;
-
-    const metalValue = metalRate * (Number(item.weight) || 0);
-    const diamondValue = Number(item.diamondValue) || 0;
-    const makingChargesAmt = metalValue * ((Number(item.makingCharges) || 0) / 100);
-    
-    const preGstTotal = metalValue + diamondValue + makingChargesAmt;
-    const gstPercent = item.gst !== undefined && item.gst !== null ? Number(item.gst) : 3;
-    const gstAmount = preGstTotal * (gstPercent / 100);
-    
-    return preGstTotal + gstAmount;
+    return calcPrice(item, marketRates);
   };
 
-  const formatINR = (amount: number) => {
-    return new Intl.NumberFormat('en-IN', {
-      maximumFractionDigits: 0,
-    }).format(amount);
+  const formatINR = (amount: number | string | null | undefined) => {
+    return formatCurrency(amount);
   };
 
-  // Centralised resolver: handles legacy string URLs + new variant objects
+  // Centralised resolver
   const getImageUrl = (entry: any) => resolveImageUrl(entry);
 
   const toggleWishlist = (e: React.MouseEvent, id: string) => {
@@ -97,6 +233,7 @@ export default function FavouritesGrid() {
         next.delete(id);
         return next;
       });
+      window.dispatchEvent(new Event("storage"));
     } else {
       showToast("Added to wishlist", "success");
       savedIds.push(id);
@@ -107,6 +244,7 @@ export default function FavouritesGrid() {
         next.add(id);
         return next;
       });
+      window.dispatchEvent(new Event("storage"));
     }
   };
 
@@ -120,7 +258,7 @@ export default function FavouritesGrid() {
       name: product.name,
       specs: `${product.purity} / ${product.weight}g`,
       price: finalPrice, 
-      image: getImageUrl(product.images[0]),
+      image: getImageUrl(product.images?.[0] || product.image),
       quantity: 1,
     };
 
@@ -134,6 +272,8 @@ export default function FavouritesGrid() {
     }
 
     localStorage.setItem("aj_cart", JSON.stringify(existingCart));
+    window.dispatchEvent(new Event("storage"));
+    window.dispatchEvent(new Event("cart_updated"));
     showToast(`${product.name} added to bag!`, "success");
   };
 
@@ -162,69 +302,22 @@ export default function FavouritesGrid() {
             No favourites marked yet. Go to the Admin Dashboard, edit a product, and check the "Show in Favourites" box!
           </div>
         ) : (
-          /* ACTUAL PRODUCT RENDERER */
-          visibleProducts.map((product) => {
+          /* ACTUAL PRODUCT RENDERER WITH STAGGERED INDEX TIMING */
+          visibleProducts.map((product, idx) => {
             const isWishlisted = wishlisted.has(product._id);
             const finalPrice = calculatePrice(product);
 
             return (
-              <Link
-                to={`/products/${product._id}`}
+              <FavouriteCard
                 key={product._id}
-                onClick={() => window.scrollTo(0, 0)}
-                className="group block"
-              >
-                <div className="relative mb-3 md:mb-4">
-                  {product.isNew && (
-                    <span className="absolute top-2 left-2 md:top-3 md:left-3 z-10 bg-[#3F0106] text-[#F2DBB6] font-jost text-[9px] md:text-[10px] tracking-[0.12em] font-semibold px-2 py-1">
-                      NEW
-                    </span>
-                  )}
-
-                  <button
-                    onClick={(e) => toggleWishlist(e, product._id)}
-                    aria-label={isWishlisted ? "Remove from wishlist" : "Add to wishlist"}
-                    aria-pressed={isWishlisted}
-                    className="absolute top-2 right-2 md:top-3 md:right-3 z-10 w-7 h-7 md:w-8 md:h-8 rounded-full bg-black/30 backdrop-blur-sm flex items-center justify-center transition-colors hover:bg-black/45"
-                  >
-                    {isWishlisted ? (
-                      <FaHeart size={13} className="text-[#C9A24B]" />
-                    ) : (
-                      <FaRegHeart size={13} className="text-white" />
-                    )}
-                  </button>
-
-                  <ProductImage
-                    image={product.images[0]}
-                    alt={product.name}
-                    ratio="square"
-                    imgClassName="transition-transform duration-500 group-hover:scale-105"
-                  />
-                </div>
-                
-                {/* Product Details & Add to Bag */}
-                <div className="flex justify-between items-start gap-2">
-                  <div className="flex flex-col">
-                    <h3 className="font-cormorant text-lg md:text-xl text-[#4A0E1B] leading-tight truncate">
-                      {product.name}
-                    </h3>
-                    <p className="font-jost text-sm md:text-base text-[#7A6A5C] mt-1">
-                      ₹{formatINR(finalPrice)}
-                    </p>
-                  </div>
-                  
-                  {/* DIRECT CART ICON */}
-                  <button 
-                    onClick={(e) => handleAddToCart(e, product, finalPrice)}
-                    className="flex items-center gap-1.5 text-[#4A0E1B] hover:text-[#C9A24B] transition-colors mt-0.5 md:mt-1 shrink-0 bg-[#C9A24B]/10 px-3 py-1.5 rounded-sm"
-                  >
-                    <ShoppingBag size={14} strokeWidth={1.5} className="md:w-4 md:h-4" />
-                    <span className="font-jost text-[9px] md:text-xs tracking-[0.15em] uppercase font-medium">
-                      Add
-                    </span>
-                  </button>
-                </div>
-              </Link>
+                product={product}
+                index={idx}
+                isWishlisted={isWishlisted}
+                finalPrice={finalPrice}
+                formatINR={formatINR}
+                onToggleWishlist={toggleWishlist}
+                onAddToCart={handleAddToCart}
+              />
             );
           })
         )}

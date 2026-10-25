@@ -68,3 +68,31 @@ body {
   background-size: 800px 100%;
   animation: product-img-shimmer 1.4s ease-in-out infinite;
 }
+
+/* ---- Hero Luxury Slideshow Animations ---- */
+@keyframes heroSlideInFromRight {
+  0% {
+    transform: translate3d(100%, 0, 0);
+  }
+  100% {
+    transform: translate3d(0%, 0, 0);
+  }
+}
+
+@keyframes heroSlideOutToLeft {
+  0% {
+    transform: translate3d(0%, 0, 0);
+  }
+  100% {
+    transform: translate3d(-100%, 0, 0);
+  }
+}
+
+@keyframes heroProgressFill {
+  0% {
+    width: 0%;
+  }
+  100% {
+    width: 100%;
+  }
+}
